@@ -7,7 +7,7 @@ from sensor_msgs.msg import Image
 from ackermann_msgs.msg import AckermannDriveStamped
 
 # 全局速度参数
-MAX_SPEED = 1.20  # 全局最高速度上限
+MAX_SPEED = 1.22  # 全局最高速度上限
 PROCESS_RESIZE_ENABLED = True
 PROCESS_WIDTH = 480
 PROCESS_HEIGHT = 360
@@ -56,12 +56,12 @@ GEOMETRY_ERR_GAIN = 2.0  # 几何朝向误差转换成等效控制误差的倍�
 GEOMETRY_ERR_LIMIT = 0.45  # 几何朝向等效误差限幅
 
 # 直道高速与速度-转向耦合参数
-FAST_SPEED_BOOST = 0.36  # 下1/2曲率接近0时的基础高速加成
-FAST_MAX_ERR = 0.22  # 允许进入高速模式的最大横向误差
-FAST_MAX_CURVE = 0.06  # 允许进入高速模式的最大曲率
-FAST_CONTROL_CURVE_LIMIT = 0.095  # 控制曲率超过该值时禁止直道高速
+FAST_SPEED_BOOST = 0.38  # 下1/2曲率接近0时的基础高速加成
+FAST_MAX_ERR = 0.24  # 允许进入高速模式的最大横向误差
+FAST_MAX_CURVE = 0.065  # 允许进入高速模式的最大曲率
+FAST_CONTROL_CURVE_LIMIT = 0.105  # 控制曲率超过该值时禁止直道高速
 STARTUP_FAST_BLOCK_FRAMES = 12  # 缓启动退出后暂时禁止高速，避免刚入正轨就冲弯
-STRAIGHT_STEER_SPEED_GAIN_MIN = 0.86  # 直道最高速时PID转角倍率下限
+STRAIGHT_STEER_SPEED_GAIN_MIN = 0.88  # 直道最高速时PID转角倍率下限
 STEER_SPEED_COUPLING = 0.22  # Scale speed down by normalized steering demand.
 
 # 控制模型参数
@@ -76,24 +76,24 @@ ERR_ALPHA = 0.55  # 横向误差低通滤波系数，越大越相信当前帧
 STARTUP_TARGET_STEP = 0.015  # 缓启动阶段每帧把目标位置推向图像中心的步长
 STARTUP_TARGET_DONE_ERR = 0.02  # 缓启动目标位置接近中心到该阈值内后退出
 STARTUP_EXIT_RAW_ERR = 0.18  # 缓启动退出时，黄线实际位置也必须接近目标，避免目标到中心但车还没跟上
-ROAD_FALLBACK_MAX_SPEED = 0.24  # 只靠路面兜底时的最高速度，防止黄线丢失后继续高速外冲
-ROAD_FALLBACK_TURN_MAX_SPEED = 0.20  # 弯道且只靠路面兜底时的最高速度
-LARGE_ERR_SPEED_LIMIT = 0.78  # 大横向误差时的最高速度
+ROAD_FALLBACK_MAX_SPEED = 0.26  # 只靠路面兜底时的最高速度，防止黄线丢失后继续高速外冲
+ROAD_FALLBACK_TURN_MAX_SPEED = 0.22  # 弯道且只靠路面兜底时的最高速度
+LARGE_ERR_SPEED_LIMIT = 0.82  # 大横向误差时的最高速度
 SEVERE_ERR_SPEED_LIMIT = 0.50  # 严重横向误差时的最高速度
 LARGE_ERR_THRESHOLD = 0.65  # 进入大误差限速的误差阈值
 SEVERE_ERR_THRESHOLD = 0.88  # 进入严重误差限速的误差阈值
 
 STRAIGHT_PARAMS = {
-    "target_speed": 0.84,  # 直道目标速度
+    "target_speed": 0.88,  # 直道目标速度
     "min_speed": 0.20,  # 直道最低速度
-    "max_steer": 0.36,  # 直道最大转角
-    "deadband": 0.05,  # 直道误差死区，小于该值按0处理
-    "turn_speed_drop": 0.09,  # 误差越大速度越低的降速系数
-    "pid_kp": 0.86,  # 直道PID比例系数
+    "max_steer": 0.38,  # 直道最大转角
+    "deadband": 0.04,  # 直道误差死区，小于该值按0处理
+    "turn_speed_drop": 0.085,  # 误差越大速度越低的降速系数
+    "pid_kp": 0.88,  # 直道PID比例系数
     "pid_ki": 0.01,  # 直道PID积分系数
-    "pid_kd": 0.16,  # 直道PID微分系数
+    "pid_kd": 0.15,  # 直道PID微分系数
     "pid_integral_limit": 0.60,  # PID积分限幅，防止积分饱和
-    "steer_rate_limit": 0.16,  # 单帧转角变化限制
+    "steer_rate_limit": 0.17,  # 单帧转角变化限制
     "sharp_turn_err": 0.75,  # 大误差强制补转向的触发阈值
     "sharp_turn_steer": 0.18,  # 大误差时的最小转角
 }
@@ -114,18 +114,18 @@ STARTUP_PARAMS = {
 }
 
 TURN_PARAMS = {
-    "target_speed": 0.96,  # 弯道目标速度
-    "min_speed": 0.55,  # 弯道最低速度
-    "max_steer": 0.70,  # 弯道最大转角
+    "target_speed": 1.00,  # 弯道目标速度
+    "min_speed": 0.56,  # 弯道最低速度
+    "max_steer": 0.72,  # 弯道最大转角
     "deadband": 0.00,  # 弯道误差死区
-    "turn_speed_drop": 0.022,  # 弯道误差降速系数
-    "pid_kp": 1.02,
+    "turn_speed_drop": 0.024,  # 弯道误差降速系数
+    "pid_kp": 1.04,
     "pid_ki": 0.02,
-    "pid_kd": 0.12,
+    "pid_kd": 0.13,
     "pid_integral_limit": STRAIGHT_PARAMS["pid_integral_limit"],
-    "steer_rate_limit": 0.24,  # 弯道单帧转角变化限制
+    "steer_rate_limit": 0.25,  # 弯道单帧转角变化限制
     "sharp_turn_err": 0.55,  # 弯道大误差强制补转向阈值
-    "sharp_turn_steer": 0.45,  # 弯道大误差时的最小转角
+    "sharp_turn_steer": 0.47,  # 弯道大误差时的最小转角
 }
 
 # 丢线恢复参数
@@ -147,7 +147,7 @@ DEBUG_PERIOD = 0.5  # 日志节流周期，单位秒
 DEBUG_DRAW = False  # 是否在图像上绘制5行关键调试文字，默认关闭以提高帧率
 DEBUG_SHOW_MASKS = False  # 是否显示ROI和路面mask调试窗口，跑速度时应关闭
 DEBUG_DRAW_MARKERS = True  # 是否在camera画面上绘制目标线和检测质心
-DEBUG_VERSION = "direct_line_near_curve_multiroi_v16_branch_cache"  # 当前调试版本标识
+DEBUG_VERSION = "direct_line_near_curve_multiroi_v17_stable_speed_push"  # 当前调试版本标识
 
 # 滑轨可调参数说明：
 # 数值后带 x100 的滑轨采用百分制缩放，例如滑轨值 60 表示实际参数 0.60。
@@ -189,7 +189,7 @@ TUNING_WINDOW = "control tuning"
 TUNING_ENABLED = True
 TUNING_POLL_INTERVAL = 3
 TUNING_TRACKBARS = (
-    ("Max speed x100", "Speed cap x100", int(round(MAX_SPEED * 100)), 120),
+    ("Max speed x100", "Speed cap x100", int(round(MAX_SPEED * 100)), 140),
     ("Err alpha x100", "Error filter alpha x100", int(round(ERR_ALPHA * 100)), 100),
     ("Steer gain min x100", "Steer gain floor x100", int(round(STRAIGHT_STEER_SPEED_GAIN_MIN * 100)), 100),
     ("S speed x100", "Straight target speed x100", int(round(STRAIGHT_PARAMS["target_speed"] * 100)), 120),
