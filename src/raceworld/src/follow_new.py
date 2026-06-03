@@ -7,7 +7,12 @@ from sensor_msgs.msg import Image
 from ackermann_msgs.msg import AckermannDriveStamped
 
 # 全局速度参数
-MAX_SPEED = 0.80  # 全局最高速度上限
+MAX_SPEED = 0.95  # 全局最高速度上限
+PROCESS_RESIZE_ENABLED = True
+PROCESS_WIDTH = 480
+PROCESS_HEIGHT = 360
+VISION_BASE_WIDTH = 640.0
+VISION_BASE_HEIGHT = 480.0
 
 # 图像ROI参数：ratio越大，ROI越靠近图像下方，也就是看得越近
 ROI_TOP_RATIO_BASE = 0.58  # 初始ROI顶部比例
@@ -34,6 +39,7 @@ ROAD_FEATURE_INTERVAL = 3  # 黄线可靠时每隔几帧更新一次路面兜底
 # 曲率与多ROI参数
 CURVE_MIN_POINTS = 80  # 曲率拟合所需最少mask点数
 CURVE_SPLIT_MIN_HEIGHT = 8  # 分层曲率评估的最小层高，避免过薄ROI误判
+CURVE_CANVAS_TOP_RATIO = 0.25  # Only build the curve mask below this image ratio.
 FAST_CURVE_LAYER_STEP = 0.03  # 每多一层曲率接近0时额外增加的速度
 CURVE_ENTER = 0.12  # 曲率大于该值时从直道模式进入弯道模式
 CURVE_EXIT = 0.04  # 曲率小于该值时从弯道模式退出到直道模式
@@ -46,12 +52,13 @@ GEOMETRY_ERR_GAIN = 2.0  # 几何朝向误差转换成等效控制误差的倍�
 GEOMETRY_ERR_LIMIT = 0.45  # 几何朝向等效误差限幅
 
 # 直道高速与速度-转向耦合参数
-FAST_SPEED_BOOST = 0.15  # 下1/2曲率接近0时的基础高速加成
-FAST_MAX_ERR = 0.12  # 允许进入高速模式的最大横向误差
-FAST_MAX_CURVE = 0.03  # 允许进入高速模式的最大曲率
-FAST_CONTROL_CURVE_LIMIT = 0.04  # 控制曲率超过该值时禁止直道高速
+FAST_SPEED_BOOST = 0.22  # 下1/2曲率接近0时的基础高速加成
+FAST_MAX_ERR = 0.15  # 允许进入高速模式的最大横向误差
+FAST_MAX_CURVE = 0.04  # 允许进入高速模式的最大曲率
+FAST_CONTROL_CURVE_LIMIT = 0.055  # 控制曲率超过该值时禁止直道高速
 STARTUP_FAST_BLOCK_FRAMES = 12  # 缓启动退出后暂时禁止高速，避免刚入正轨就冲弯
-STRAIGHT_STEER_SPEED_GAIN_MIN = 0.68  # 直道最高速时PID转角倍率下限
+STRAIGHT_STEER_SPEED_GAIN_MIN = 0.72  # 直道最高速时PID转角倍率下限
+STEER_SPEED_COUPLING = 0.35  # Scale speed down by normalized steering demand.
 
 # 控制模型参数
 DT = 1.0 / 30.0  # Fallback control period when image timestamps are invalid.
@@ -61,28 +68,28 @@ L = 0.164  # Wheelbase from car.xacro: 0.082311 - (-0.081663).
 
 # 误差处理参数
 LINE_TARGET_ERR = 0.0  # 目标横向误差，0表示让线位于图像中心
-ERR_ALPHA = 0.3  # 横向误差低通滤波系数，越大越相信当前帧
+ERR_ALPHA = 0.4  # 横向误差低通滤波系数，越大越相信当前帧
 STARTUP_TARGET_STEP = 0.015  # 缓启动阶段每帧把目标位置推向图像中心的步长
 STARTUP_TARGET_DONE_ERR = 0.02  # 缓启动目标位置接近中心到该阈值内后退出
 STARTUP_EXIT_RAW_ERR = 0.18  # 缓启动退出时，黄线实际位置也必须接近目标，避免目标到中心但车还没跟上
 ROAD_FALLBACK_MAX_SPEED = 0.24  # 只靠路面兜底时的最高速度，防止黄线丢失后继续高速外冲
 ROAD_FALLBACK_TURN_MAX_SPEED = 0.20  # 弯道且只靠路面兜底时的最高速度
-LARGE_ERR_SPEED_LIMIT = 0.30  # 大横向误差时的最高速度
-SEVERE_ERR_SPEED_LIMIT = 0.20  # 严重横向误差时的最高速度
-LARGE_ERR_THRESHOLD = 0.35  # 进入大误差限速的误差阈值
-SEVERE_ERR_THRESHOLD = 0.60  # 进入严重误差限速的误差阈值
+LARGE_ERR_SPEED_LIMIT = 0.42  # 大横向误差时的最高速度
+SEVERE_ERR_SPEED_LIMIT = 0.28  # 严重横向误差时的最高速度
+LARGE_ERR_THRESHOLD = 0.45  # 进入大误差限速的误差阈值
+SEVERE_ERR_THRESHOLD = 0.68  # 进入严重误差限速的误差阈值
 
 STRAIGHT_PARAMS = {
-    "target_speed": 0.60,  # 直道目标速度
+    "target_speed": 0.68,  # 直道目标速度
     "min_speed": 0.20,  # 直道最低速度
-    "max_steer": 0.25,  # 直道最大转角
-    "deadband": 0.08,  # 直道误差死区，小于该值按0处理
-    "turn_speed_drop": 0.20,  # 误差越大速度越低的降速系数
-    "pid_kp": 0.76,  # 直道PID比例系数
+    "max_steer": 0.28,  # 直道最大转角
+    "deadband": 0.06,  # 直道误差死区，小于该值按0处理
+    "turn_speed_drop": 0.16,  # 误差越大速度越低的降速系数
+    "pid_kp": 0.78,  # 直道PID比例系数
     "pid_ki": 0.01,  # 直道PID积分系数
-    "pid_kd": 0.10,  # 直道PID微分系数
+    "pid_kd": 0.12,  # 直道PID微分系数
     "pid_integral_limit": 0.60,  # PID积分限幅，防止积分饱和
-    "steer_rate_limit": 0.08,  # 单帧转角变化限制
+    "steer_rate_limit": 0.10,  # 单帧转角变化限制
     "sharp_turn_err": 0.75,  # 大误差强制补转向的触发阈值
     "sharp_turn_steer": 0.18,  # 大误差时的最小转角
 }
@@ -103,18 +110,18 @@ STARTUP_PARAMS = {
 }
 
 TURN_PARAMS = {
-    "target_speed": 0.60,  # 弯道目标速度
+    "target_speed": 0.70,  # 弯道目标速度
     "min_speed": 0.40,  # 弯道最低速度
-    "max_steer": 0.50,  # 弯道最大转角
+    "max_steer": 0.55,  # 弯道最大转角
     "deadband": 0.00,  # 弯道误差死区
-    "turn_speed_drop": 0.05,  # 弯道误差降速系数
-    "pid_kp": 0.76,
+    "turn_speed_drop": 0.04,  # 弯道误差降速系数
+    "pid_kp": 0.82,
     "pid_ki": 0.02,
     "pid_kd": 0.10,
     "pid_integral_limit": STRAIGHT_PARAMS["pid_integral_limit"],
-    "steer_rate_limit": 0.14,  # 弯道单帧转角变化限制
+    "steer_rate_limit": 0.16,  # 弯道单帧转角变化限制
     "sharp_turn_err": 0.55,  # 弯道大误差强制补转向阈值
-    "sharp_turn_steer": 0.30,  # 弯道大误差时的最小转角
+    "sharp_turn_steer": 0.34,  # 弯道大误差时的最小转角
 }
 
 # 丢线恢复参数
@@ -136,7 +143,7 @@ DEBUG_PERIOD = 0.5  # 日志节流周期，单位秒
 DEBUG_DRAW = False  # 是否在图像上绘制5行关键调试文字，默认关闭以提高帧率
 DEBUG_SHOW_MASKS = False  # 是否显示ROI和路面mask调试窗口，跑速度时应关闭
 DEBUG_DRAW_MARKERS = True  # 是否在camera画面上绘制目标线和检测质心
-DEBUG_VERSION = "direct_line_near_curve_multiroi_v10_turn_speed_up3"  # 当前调试版本标识
+DEBUG_VERSION = "direct_line_near_curve_multiroi_v11_log_speed_tune"  # 当前调试版本标识
 
 # 滑轨可调参数说明：
 # 数值后带 x100 的滑轨采用百分制缩放，例如滑轨值 60 表示实际参数 0.60。
@@ -245,6 +252,40 @@ def on_tuning_change(_value):
     pass
 
 
+def resize_for_processing(frame):
+    if not PROCESS_RESIZE_ENABLED:
+        debug_info["input_w"] = frame.shape[1]
+        debug_info["input_h"] = frame.shape[0]
+        debug_info["process_w"] = frame.shape[1]
+        debug_info["process_h"] = frame.shape[0]
+        debug_info["process_resized"] = False
+        return frame
+
+    input_h, input_w = frame.shape[:2]
+    debug_info["input_w"] = input_w
+    debug_info["input_h"] = input_h
+    debug_info["process_w"] = PROCESS_WIDTH
+    debug_info["process_h"] = PROCESS_HEIGHT
+    if input_w == PROCESS_WIDTH and input_h == PROCESS_HEIGHT:
+        debug_info["process_resized"] = False
+        return frame
+
+    debug_info["process_resized"] = True
+    return cv2.resize(frame, (PROCESS_WIDTH, PROCESS_HEIGHT), interpolation=cv2.INTER_AREA)
+
+
+def image_width_scale():
+    return max(0.1, float(debug_info.get("image_w", VISION_BASE_WIDTH)) / VISION_BASE_WIDTH)
+
+
+def image_height_scale():
+    return max(0.1, float(debug_info.get("image_h", VISION_BASE_HEIGHT)) / VISION_BASE_HEIGHT)
+
+
+def image_area_scale():
+    return image_width_scale() * image_height_scale()
+
+
 def update_control_dt(stamp=None):
     global control_dt, last_frame_time
 
@@ -318,18 +359,39 @@ def fixed_road_bounds():
 
 
 def current_min_mask_area():
-    debug_info["min_mask_area"] = MIN_MASK_AREA
-    return MIN_MASK_AREA
+    value = max(20, int(round(MIN_MASK_AREA * image_area_scale())))
+    debug_info["min_mask_area"] = value
+    return value
 
 
 def current_road_min_area():
-    debug_info["road_min_area"] = ROAD_MIN_AREA
-    return ROAD_MIN_AREA
+    value = max(120, int(round(ROAD_MIN_AREA * image_area_scale())))
+    debug_info["road_min_area"] = value
+    return value
 
 
 def current_roi_height():
-    debug_info["roi_height"] = ROI_HEIGHT
-    return ROI_HEIGHT
+    value = max(10, int(round(ROI_HEIGHT * image_height_scale())))
+    debug_info["roi_height"] = value
+    return value
+
+
+def current_road_row_min_pixels():
+    value = max(20, int(round(ROAD_ROW_MIN_PIXELS * image_width_scale())))
+    debug_info["road_row_min_pixels"] = value
+    return value
+
+
+def current_curve_min_points():
+    value = max(30, int(round(CURVE_MIN_POINTS * image_area_scale())))
+    debug_info["curve_min_points"] = value
+    return value
+
+
+def current_curve_split_min_height():
+    value = max(6, int(round(CURVE_SPLIT_MIN_HEIGHT * image_height_scale())))
+    debug_info["curve_split_min_height"] = value
+    return value
 
 
 def current_max_speed():
@@ -450,30 +512,54 @@ def roi_bounds(h, ratio):
 
 def apply_roi(mask, h, w, ratio):
     search_top, search_bot = roi_bounds(h, ratio)
-    roi_mask = mask.copy()
-    roi_mask[0:search_top, 0:w] = 0
-    roi_mask[search_bot:h, 0:w] = 0
+    roi_mask = numpy.zeros_like(mask)
+    if search_bot > search_top:
+        roi_mask[search_top:search_bot, 0:w] = mask[search_top:search_bot, 0:w]
     return roi_mask, search_top, search_bot
 
 
-def set_roi_forward(h, w, mask):
+def threshold_hsv_region(hsv, lower, upper, top, bot, median_kernel=0, gaussian_kernel=0):
+    h, w = hsv.shape[:2]
+    top = max(0, min(h, top))
+    bot = max(top, min(h, bot))
+    mask = numpy.zeros((h, w), dtype=numpy.uint8)
+    if bot <= top:
+        return mask
+
+    region = cv2.inRange(hsv[top:bot, 0:w], lower, upper)
+    if median_kernel > 1:
+        region = cv2.medianBlur(region, median_kernel)
+    if gaussian_kernel > 1:
+        region = cv2.GaussianBlur(region, (gaussian_kernel, gaussian_kernel), 0)
+    mask[top:bot, 0:w] = region
+    return mask
+
+
+def active_roi_bounds(h, w):
     active_ratio = STARTUP_ROI_TOP_RATIO if startup_active else roi_top_ratio
-    mask, search_top, search_bot = apply_roi(mask, h, w, active_ratio)
+    search_top, search_bot = roi_bounds(h, active_ratio)
     debug_info["roi_top_ratio"] = active_ratio
     debug_info["roi_source"] = "startup" if startup_active else "dynamic"
     debug_info["roi_top"] = search_top
     debug_info["roi_bot"] = search_bot
+    return active_ratio, search_top, search_bot
+
+
+def set_roi_forward(h, w, mask):
+    active_ratio, search_top, search_bot = active_roi_bounds(h, w)
+    mask, search_top, search_bot = apply_roi(mask, h, w, active_ratio)
     return mask
 
 
-def fit_curvature(mask, w, roi_top, roi_bot, min_points):
-    ys, xs = numpy.nonzero(mask)
+def fit_curvature_region(mask_region, w, roi_top, roi_bot, min_points):
+    ys, xs = numpy.nonzero(mask_region)
     point_count = len(xs)
     if point_count < min_points:
         return False, 0.0, point_count
 
+    ys = ys.astype(float) + roi_top
     y_span = max(1.0, float(roi_bot - roi_top))
-    y_norm = 2.0 * (ys.astype(float) - roi_top) / y_span - 1.0
+    y_norm = 2.0 * (ys - roi_top) / y_span - 1.0
     x_norm = (xs.astype(float) - (w / 2.0)) / (w / 2.0)
 
     try:
@@ -485,25 +571,31 @@ def fit_curvature(mask, w, roi_top, roi_bot, min_points):
     return True, float(curvature), point_count
 
 
+def fit_curvature(mask, w, roi_top, roi_bot, min_points):
+    h = mask.shape[0]
+    roi_top = max(0, min(h, roi_top))
+    roi_bot = max(roi_top, min(h, roi_bot))
+    return fit_curvature_region(mask[roi_top:roi_bot, 0:w], w, roi_top, roi_bot, min_points)
+
+
 def estimate_canvas_curve_layers(canvas_mask, w):
     h = canvas_mask.shape[0]
+    curve_min_points = current_curve_min_points()
+    split_min_height = current_curve_split_min_height()
     layer_curves = []
     curve_layers = []
     fast_layers = 0
     segment_bot = h
     segment_top = h // 2
 
-    while segment_top >= 0 and segment_bot - segment_top >= CURVE_SPLIT_MIN_HEIGHT:
-        layer_mask = canvas_mask.copy()
-        layer_mask[0:segment_top, 0:w] = 0
-        layer_mask[segment_bot:h, 0:w] = 0
+    while segment_top >= 0 and segment_bot - segment_top >= split_min_height:
         segment_height = max(1, segment_bot - segment_top)
         valid_layer, layer_curve, layer_points = fit_curvature(
-            layer_mask,
+            canvas_mask,
             w,
             segment_top,
             segment_bot,
-            max(12, min(CURVE_MIN_POINTS, int(CURVE_MIN_POINTS * segment_height / max(1, h)))),
+            max(12, min(curve_min_points, int(curve_min_points * segment_height / max(1, h)))),
         )
         if not valid_layer:
             break
@@ -529,10 +621,8 @@ def estimate_mode_curvature(canvas_mask, w):
     h = canvas_mask.shape[0]
     roi_top = h // 2
     roi_bot = h
-    lower_mask = canvas_mask.copy()
-    lower_mask[0:roi_top, 0:w] = 0
 
-    valid, curvature, point_count = fit_curvature(lower_mask, w, roi_top, roi_bot, CURVE_MIN_POINTS)
+    valid, curvature, point_count = fit_curvature(canvas_mask, w, roi_top, roi_bot, current_curve_min_points())
     debug_info["mode_curve_valid"] = valid
     debug_info["mode_curvature"] = curvature if valid else 0.0
     debug_info["mode_curve_points"] = point_count
@@ -542,7 +632,7 @@ def estimate_mode_curvature(canvas_mask, w):
 def estimate_line_curvature(mask, w, canvas_mask=None):
     roi_top = debug_info.get("roi_top", 0)
     roi_bot = debug_info.get("roi_bot", mask.shape[0])
-    valid, curvature, point_count = fit_curvature(mask, w, roi_top, roi_bot, CURVE_MIN_POINTS)
+    valid, curvature, point_count = fit_curvature(mask, w, roi_top, roi_bot, current_curve_min_points())
     debug_info["curve_points"] = point_count
     if not valid:
         debug_info["curve_valid"] = False
@@ -575,11 +665,15 @@ def estimate_line_curvature(mask, w, canvas_mask=None):
 
 def estimate_road_features(hsv, h, w):
     lower_road, upper_road = fixed_road_bounds()
-    road_mask = cv2.inRange(hsv, lower_road, upper_road)
-    road_mask = set_roi_forward(h, w, road_mask)
-    road_mask = cv2.medianBlur(road_mask, 5)
+    _active_ratio, roi_top, roi_bot = active_roi_bounds(h, w)
+    road_mask = threshold_hsv_region(hsv, lower_road, upper_road, roi_top, roi_bot, median_kernel=5)
     kernel = numpy.ones((5, 5), numpy.uint8)
-    road_mask = cv2.morphologyEx(road_mask, cv2.MORPH_CLOSE, kernel)
+    if roi_bot > roi_top:
+        road_mask[roi_top:roi_bot, 0:w] = cv2.morphologyEx(
+            road_mask[roi_top:roi_bot, 0:w],
+            cv2.MORPH_CLOSE,
+            kernel,
+        )
 
     road_area = cv2.countNonZero(road_mask)
     debug_info["road_area"] = road_area
@@ -595,9 +689,10 @@ def estimate_road_features(hsv, h, w):
     roi_bot = debug_info.get("roi_bot", h)
     row_y = []
     row_x = []
+    row_min_pixels = current_road_row_min_pixels()
     for y in range(roi_top, roi_bot):
         xs = numpy.flatnonzero(road_mask[y])
-        if len(xs) >= ROAD_ROW_MIN_PIXELS:
+        if len(xs) >= row_min_pixels:
             row_y.append(float(y))
             row_x.append(0.5 * float(xs[0] + xs[-1]))
 
@@ -721,16 +816,33 @@ def estimate_lane_error(image):
 
     vision_frame_count += 1
 
+    h, w = image.shape[:2]
+    debug_info["image_h"] = h
+    debug_info["image_w"] = w
+
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     lower_yellow, upper_yellow = fixed_yellow_bounds()
-    yellow_base_mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
-    yellow_base_mask = cv2.medianBlur(yellow_base_mask, 5)
-
-    h, w = yellow_base_mask.shape
-    debug_info["image_h"] = h
-    mask = set_roi_forward(h, w, yellow_base_mask)
-    mask = cv2.GaussianBlur(mask, (5, 5), 0)
-    yellow_canvas_mask = cv2.GaussianBlur(yellow_base_mask, (5, 5), 0)
+    _active_ratio, roi_top, roi_bot = active_roi_bounds(h, w)
+    mask = threshold_hsv_region(
+        hsv,
+        lower_yellow,
+        upper_yellow,
+        roi_top,
+        roi_bot,
+        median_kernel=5,
+        gaussian_kernel=5,
+    )
+    curve_canvas_top = int(CURVE_CANVAS_TOP_RATIO * h)
+    debug_info["curve_canvas_top"] = curve_canvas_top
+    yellow_canvas_mask = threshold_hsv_region(
+        hsv,
+        lower_yellow,
+        upper_yellow,
+        curve_canvas_top,
+        h,
+        median_kernel=5,
+        gaussian_kernel=5,
+    )
     estimate_mode_curvature(yellow_canvas_mask, w)
 
     M = cv2.moments(mask)
@@ -852,6 +964,18 @@ def straight_speed_steer_gain(speed_cmd, params):
     gain = 1.0 - (1.0 - min_gain) * speed_ratio
     debug_info["speed_steer_gain"] = gain
     return gain
+
+
+def apply_steer_speed_coupling(speed_cmd, target_speed, steer, params):
+    steer_ratio = abs(steer) / max(1e-6, params["max_steer"])
+    steer_ratio = max(0.0, min(1.0, steer_ratio))
+    speed_scale = 1.0 - STEER_SPEED_COUPLING * steer_ratio
+    coupled_speed = speed_cmd * speed_scale
+    coupled_speed = max(params["min_speed"], min(target_speed, coupled_speed))
+    debug_info["steer_speed_ratio"] = steer_ratio
+    debug_info["steer_speed_scale"] = speed_scale
+    debug_info["steer_speed_coupling"] = STEER_SPEED_COUPLING
+    return coupled_speed
 
 
 def pid_steering(err, params, steer_gain=1.0):
@@ -1234,8 +1358,7 @@ def follow_line(image):
     else:
         debug_info["sharp_turn"] = False
     debug_info["raw_steer"] = steer
-    speed_cmd -= 0.06 * abs(steer)
-    speed_cmd = max(params["min_speed"], min(target_speed, speed_cmd))
+    speed_cmd = apply_steer_speed_coupling(speed_cmd, target_speed, steer, params)
     steer = limit_steer_rate(steer, params)
     prev_steer = steer
     debug_info["speed_cmd"] = speed_cmd
@@ -1265,6 +1388,7 @@ def image_callback(msg):
     if bridge is None:
         bridge = cv_bridge.CvBridge()
     frame = bridge.imgmsg_to_cv2(msg, "bgr8")
+    frame = resize_for_processing(frame)
     follow_line(frame)
 
 
