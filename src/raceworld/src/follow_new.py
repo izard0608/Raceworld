@@ -55,6 +55,26 @@ GEOMETRY_CURVE_SCALE = 0.18  # 曲率映射到几何任务权重的尺度
 GEOMETRY_ERR_GAIN = 2.0  # 几何朝向误差转换成等效控制误差的倍率
 GEOMETRY_ERR_LIMIT = 0.45  # 几何朝向等效误差限幅
 
+# Path preview and geometric steering.
+PATH_SAMPLE_STEP = 5
+PATH_ROW_MIN_PIXELS = 8
+PATH_MIN_POINTS = 6
+PATH_LOOKAHEAD_MIN = 0.42
+PATH_LOOKAHEAD_MAX = 0.78
+PATH_PREVIEW_GAIN = 1.05
+PATH_HEADING_GAIN = 0.34
+PATH_CURVE_FF_GAIN = 0.08
+PATH_STEER_BLEND_BASE = 0.22
+PATH_STEER_BLEND_MAX = 0.55
+PATH_CURVE_BLEND_SCALE = 1.2
+PATH_PREVIEW_BLEND_SCALE = 0.45
+PATH_CURVE_SPEED_GAIN = 0.34
+PATH_CURVE_SPEED_MIN = 0.56
+PATH_CURVE_SPEED_EPS = 0.035
+PATH_CURVE_SPEED_WEIGHT = 0.12
+PATH_PREVIEW_SLOW_ERR = 0.50
+PATH_PREVIEW_SPEED_LIMIT = 0.82
+
 # 直道高速与速度-转向耦合参数
 FAST_SPEED_BOOST = 0.38  # 下1/2曲率接近0时的基础高速加成
 FAST_MAX_ERR = 0.24  # 允许进入高速模式的最大横向误差
@@ -147,7 +167,7 @@ DEBUG_PERIOD = 0.5  # 日志节流周期，单位秒
 DEBUG_DRAW = False  # 是否在图像上绘制5行关键调试文字，默认关闭以提高帧率
 DEBUG_SHOW_MASKS = False  # 是否显示ROI和路面mask调试窗口，跑速度时应关闭
 DEBUG_DRAW_MARKERS = True  # 是否在camera画面上绘制目标线和检测质心
-DEBUG_VERSION = "direct_line_near_curve_multiroi_v18_speed_guard_recovery"  # 当前调试版本标识
+DEBUG_VERSION = "direct_line_near_curve_multiroi_v19_path_preview"  # 当前调试版本标识
 
 # 滑轨可调参数说明：
 # 数值后带 x100 的滑轨采用百分制缩放，例如滑轨值 60 表示实际参数 0.60。
@@ -738,6 +758,133 @@ def estimate_line_curvature(mask, w, canvas_mask=None):
     return curvature
 
 
+def reset_path_preview():
+    debug_info["path_valid"] = False
+    debug_info["path_points"] = 0
+    debug_info["path_near_err"] = 0.0
+    debug_info["path_preview_err"] = 0.0
+    debug_info["path_heading"] = 0.0
+    debug_info["path_curvature"] = 0.0
+    debug_info["path_coeff_a"] = 0.0
+    debug_info["path_coeff_b"] = 0.0
+    debug_info["path_coeff_c"] = 0.0
+    debug_info["path_lookahead"] = 0.0
+    debug_info["path_preview_x"] = -1
+    debug_info["path_preview_y"] = -1
+    debug_info["path_steer"] = 0.0
+    debug_info["path_blend"] = 0.0
+    debug_info["path_curve_speed_limit"] = 0.0
+    debug_info["path_preview_speed_limit"] = 0.0
+
+
+def extract_path_preview(mask, w, roi_top, roi_bot):
+    h = mask.shape[0]
+    roi_top = max(0, min(h, int(roi_top)))
+    roi_bot = max(roi_top, min(h, int(roi_bot)))
+    y_span = max(1.0, float(roi_bot - roi_top))
+    row_y = []
+    row_x = []
+
+    for y in range(roi_bot - 1, roi_top - 1, -PATH_SAMPLE_STEP):
+        xs = numpy.flatnonzero(mask[y])
+        if len(xs) >= PATH_ROW_MIN_PIXELS:
+            row_y.append((float(roi_bot - y)) / y_span)
+            row_x.append((0.5 * float(xs[0] + xs[-1]) - (w / 2.0)) / (w / 2.0))
+
+    point_count = len(row_y)
+    debug_info["path_points"] = point_count
+    if point_count < PATH_MIN_POINTS:
+        reset_path_preview()
+        debug_info["path_points"] = point_count
+        return False
+
+    y_norm = numpy.array(row_y)
+    x_norm = numpy.array(row_x)
+    try:
+        curve_a, curve_b, curve_c = numpy.polyfit(y_norm, x_norm, 2)
+    except (TypeError, ValueError, numpy.linalg.LinAlgError):
+        reset_path_preview()
+        debug_info["path_points"] = point_count
+        return False
+
+    near_count = min(3, point_count)
+    near_err = float(numpy.mean(x_norm[:near_count]))
+    lookahead = PATH_LOOKAHEAD_MIN
+    preview_err = float(curve_a * lookahead * lookahead + curve_b * lookahead + curve_c)
+    heading = float(2.0 * curve_a * lookahead + curve_b)
+    curvature = float((2.0 * curve_a) / ((1.0 + heading * heading) ** 1.5))
+
+    debug_info["path_valid"] = True
+    debug_info["path_points"] = point_count
+    debug_info["path_near_err"] = near_err
+    debug_info["path_preview_err"] = preview_err
+    debug_info["path_heading"] = heading
+    debug_info["path_curvature"] = curvature
+    debug_info["path_coeff_a"] = float(curve_a)
+    debug_info["path_coeff_b"] = float(curve_b)
+    debug_info["path_coeff_c"] = float(curve_c)
+    debug_info["path_lookahead"] = lookahead
+    debug_info["path_preview_x"] = int((preview_err * 0.5 + 0.5) * w)
+    debug_info["path_preview_y"] = int(roi_bot - lookahead * y_span)
+    debug_info["path_steer"] = 0.0
+    debug_info["path_blend"] = 0.0
+    debug_info["path_curve_speed_limit"] = 0.0
+    debug_info["path_preview_speed_limit"] = 0.0
+    return True
+
+
+def evaluate_path_preview(speed_cmd, params):
+    if not debug_info.get("path_valid", False):
+        return None
+
+    speed_span = max(1e-6, params["target_speed"] - params["min_speed"])
+    speed_ratio = (speed_cmd - params["min_speed"]) / speed_span
+    speed_ratio = max(0.0, min(1.0, speed_ratio))
+    lookahead = PATH_LOOKAHEAD_MIN + (PATH_LOOKAHEAD_MAX - PATH_LOOKAHEAD_MIN) * speed_ratio
+
+    curve_a = debug_info.get("path_coeff_a", 0.0)
+    curve_b = debug_info.get("path_coeff_b", 0.0)
+    curve_c = debug_info.get("path_coeff_c", 0.0)
+    preview_err = float(curve_a * lookahead * lookahead + curve_b * lookahead + curve_c)
+    heading = float(2.0 * curve_a * lookahead + curve_b)
+    curvature = float((2.0 * curve_a) / ((1.0 + heading * heading) ** 1.5))
+    roi_top = debug_info.get("roi_top", 0)
+    roi_bot = debug_info.get("roi_bot", debug_info.get("image_h", 0))
+    y_span = max(1.0, float(roi_bot - roi_top))
+    w = max(1, int(debug_info.get("image_w", 1)))
+
+    debug_info["path_lookahead"] = lookahead
+    debug_info["path_preview_err"] = preview_err
+    debug_info["path_heading"] = heading
+    debug_info["path_curvature"] = curvature
+    debug_info["path_preview_x"] = int((preview_err * 0.5 + 0.5) * w)
+    debug_info["path_preview_y"] = int(roi_bot - lookahead * y_span)
+    return preview_err, heading, curvature, lookahead
+
+
+def path_steering(speed_cmd, params):
+    preview = evaluate_path_preview(speed_cmd, params)
+    if preview is None or startup_active or debug_info.get("vision_source", "") != "yellow":
+        debug_info["path_steer"] = 0.0
+        debug_info["path_blend"] = 0.0
+        return 0.0, 0.0
+
+    preview_err, heading, curvature, lookahead = preview
+    alpha = PATH_PREVIEW_GAIN * preview_err + PATH_HEADING_GAIN * heading
+    steer = -float(numpy.arctan2(2.0 * L * alpha, max(0.20, lookahead)))
+    steer -= PATH_CURVE_FF_GAIN * curvature
+    steer = max(-params["max_steer"], min(params["max_steer"], steer))
+
+    curve_ratio = min(1.0, abs(curvature) / PATH_CURVE_BLEND_SCALE)
+    preview_ratio = min(1.0, abs(preview_err) / PATH_PREVIEW_BLEND_SCALE)
+    blend_signal = max(curve_ratio, preview_ratio)
+    blend = PATH_STEER_BLEND_BASE + (PATH_STEER_BLEND_MAX - PATH_STEER_BLEND_BASE) * blend_signal
+
+    debug_info["path_steer"] = steer
+    debug_info["path_blend"] = blend
+    return steer, blend
+
+
 def estimate_road_features(hsv, h, w):
     lower_road, upper_road = fixed_road_bounds()
     _active_ratio, roi_top, roi_bot = active_roi_bounds(h, w)
@@ -941,6 +1088,7 @@ def estimate_lane_error(image):
             cv2.imshow("road mask", road_mask)
 
     if not yellow_reliable:
+        reset_path_preview()
         debug_info["curve_valid"] = False
         debug_info["line_curvature"] = 0.0
         debug_info["fast_curve_layers"] = 0
@@ -973,6 +1121,7 @@ def estimate_lane_error(image):
         return None, w
 
     curvature = estimate_line_curvature(mask, w, yellow_canvas_mask)
+    extract_path_preview(mask, w, debug_info.get("roi_top", 0), debug_info.get("roi_bot", h))
     control_curvature = update_control_curvature()
 
     cx = int(M["m10"] / M["m00"])
@@ -1222,6 +1371,31 @@ def speed_target_for(params, err):
     elif abs_err >= LARGE_ERR_THRESHOLD:
         target_speed = min(target_speed, LARGE_ERR_SPEED_LIMIT)
 
+    if (
+        not startup_active
+        and info.get("vision_source", "") == "yellow"
+        and info.get("path_valid", False)
+    ):
+        evaluate_path_preview(target_speed, params)
+        path_curve_abs = abs(info.get("path_curvature", 0.0))
+        curve_limit = PATH_CURVE_SPEED_GAIN / numpy.sqrt(path_curve_abs + PATH_CURVE_SPEED_EPS)
+        curve_limit = float(max(PATH_CURVE_SPEED_MIN, min(max_speed, curve_limit)))
+        if curve_limit < target_speed:
+            target_speed = min(
+                target_speed,
+                (1.0 - PATH_CURVE_SPEED_WEIGHT) * target_speed + PATH_CURVE_SPEED_WEIGHT * curve_limit,
+            )
+        info["path_curve_speed_limit"] = curve_limit
+
+        if abs(info.get("path_preview_err", 0.0)) > PATH_PREVIEW_SLOW_ERR:
+            target_speed = min(target_speed, PATH_PREVIEW_SPEED_LIMIT)
+            info["path_preview_speed_limit"] = PATH_PREVIEW_SPEED_LIMIT
+        else:
+            info["path_preview_speed_limit"] = 0.0
+    else:
+        info["path_curve_speed_limit"] = 0.0
+        info["path_preview_speed_limit"] = 0.0
+
     params["min_speed"] = min(params["min_speed"], target_speed)
     info["fast_confidence"] = fast_confidence
     info["fast_curve_layers"] = fast_curve_layers
@@ -1317,7 +1491,8 @@ def log_debug():
 
     rospy.loginfo(
         "mode={} vision={} reject={} err={:.3f}/{:.3f} speed={:.3f}/{:.3f} "
-        "steer={:.3f} curve={:.3f} road={} fast={} lost={} pid={:.2f}/{:.2f}/{:.2f}".format(
+        "steer={:.3f} curve={:.3f} path={}/{:.3f}/{:.3f}/{:.2f} "
+        "road={} fast={} lost={} pid={:.2f}/{:.2f}/{:.2f}".format(
             debug_info.get("mode", ""),
             debug_info.get("vision_source", ""),
             debug_info.get("reject_reason", ""),
@@ -1327,6 +1502,10 @@ def log_debug():
             debug_info.get("speed_target", 0.0),
             debug_info.get("steer_cmd", 0.0),
             debug_info.get("control_curvature", 0.0),
+            debug_info.get("path_valid", False),
+            debug_info.get("path_preview_err", 0.0),
+            debug_info.get("path_curvature", 0.0),
+            debug_info.get("path_blend", 0.0),
             debug_info.get("road_valid", False),
             debug_info.get("fast_confidence", False),
             lost_count,
@@ -1374,6 +1553,9 @@ def follow_line(image):
         debug_info["pid_p"] = 0.0
         debug_info["pid_i"] = 0.0
         debug_info["pid_d"] = 0.0
+        debug_info["pid_steer"] = 0.0
+        debug_info["path_steer"] = 0.0
+        debug_info["path_blend"] = 0.0
         debug_info["speed_steer_gain"] = 1.0
         debug_info["position_task_err"] = 0.0
         debug_info["geometry_task_err"] = 0.0
@@ -1430,7 +1612,12 @@ def follow_line(image):
     speed_cmd = max(params["min_speed"], min(target_speed, speed_cmd))
 
     steer_gain = straight_speed_steer_gain(speed_cmd, params)
-    steer = pid_steering(err, params, steer_gain)
+    pid_steer = pid_steering(err, params, steer_gain)
+    path_steer, path_blend = path_steering(speed_cmd, params)
+    steer = (1.0 - path_blend) * pid_steer + path_blend * path_steer
+    debug_info["pid_steer"] = pid_steer
+    if path_blend > 0.0:
+        debug_info["control"] = "pid+path"
 
     steer = max(-params["max_steer"], min(params["max_steer"], steer))
     if abs(err) > params["sharp_turn_err"] and abs(steer) < params["sharp_turn_steer"]:
@@ -1458,6 +1645,10 @@ def follow_line(image):
         if point_cy < 0:
             point_cy = image.shape[0] - 30
         cv2.circle(image, (point_cx, point_cy), 8, (0, 0, 255), -1)
+        if debug_info.get("path_valid", False):
+            preview_x = max(0, min(image.shape[1] - 1, debug_info.get("path_preview_x", target_x)))
+            preview_y = max(0, min(image.shape[0] - 1, debug_info.get("path_preview_y", image.shape[0] - 30)))
+            cv2.circle(image, (preview_x, preview_y), 6, (0, 255, 0), -1)
     draw_debug(image)
     show_camera_frame(image)
 
