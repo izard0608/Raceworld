@@ -1,0 +1,2 @@
+raceworld
+-DCATKIN_DEVEL_PREFIX=/home/ecs-user/aliyun_ws/devel -DCMAKE_INSTALL_PREFIX=/home/ecs-user/aliyun_ws/install -G Unix Makefiles

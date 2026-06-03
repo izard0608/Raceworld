@@ -1,0 +1,2 @@
+- setup-file:
+    local-name: /home/ecs-user/aliyun_ws/devel/setup.sh

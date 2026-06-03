@@ -1,0 +1,8 @@
+prefix=/home/ecs-user/aliyun_ws/install
+
+Name: raceworld
+Description: Description of raceworld
+Version: 0.0.0
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: 
