@@ -62,7 +62,7 @@ FAST_MAX_CURVE = 0.065  # 允许进入高速模式的最大曲率
 FAST_CONTROL_CURVE_LIMIT = 0.105  # 控制曲率超过该值时禁止直道高速
 STARTUP_FAST_BLOCK_FRAMES = 12  # 缓启动退出后暂时禁止高速，避免刚入正轨就冲弯
 STRAIGHT_STEER_SPEED_GAIN_MIN = 0.88  # 直道最高速时PID转角倍率下限
-STEER_SPEED_COUPLING = 0.22  # Scale speed down by normalized steering demand.
+STEER_SPEED_COUPLING = 0.26  # Scale speed down by normalized steering demand.
 
 # 控制模型参数
 DT = 1.0 / 30.0  # Fallback control period when image timestamps are invalid.
@@ -72,16 +72,16 @@ L = 0.164  # Wheelbase from car.xacro: 0.082311 - (-0.081663).
 
 # 误差处理参数
 LINE_TARGET_ERR = 0.0  # 目标横向误差，0表示让线位于图像中心
-ERR_ALPHA = 0.55  # 横向误差低通滤波系数，越大越相信当前帧
+ERR_ALPHA = 0.58  # 横向误差低通滤波系数，越大越相信当前帧
 STARTUP_TARGET_STEP = 0.015  # 缓启动阶段每帧把目标位置推向图像中心的步长
 STARTUP_TARGET_DONE_ERR = 0.02  # 缓启动目标位置接近中心到该阈值内后退出
 STARTUP_EXIT_RAW_ERR = 0.18  # 缓启动退出时，黄线实际位置也必须接近目标，避免目标到中心但车还没跟上
 ROAD_FALLBACK_MAX_SPEED = 0.26  # 只靠路面兜底时的最高速度，防止黄线丢失后继续高速外冲
 ROAD_FALLBACK_TURN_MAX_SPEED = 0.22  # 弯道且只靠路面兜底时的最高速度
-LARGE_ERR_SPEED_LIMIT = 0.82  # 大横向误差时的最高速度
-SEVERE_ERR_SPEED_LIMIT = 0.50  # 严重横向误差时的最高速度
-LARGE_ERR_THRESHOLD = 0.65  # 进入大误差限速的误差阈值
-SEVERE_ERR_THRESHOLD = 0.88  # 进入严重误差限速的误差阈值
+LARGE_ERR_SPEED_LIMIT = 0.80  # 大横向误差时的最高速度
+SEVERE_ERR_SPEED_LIMIT = 0.46  # 严重横向误差时的最高速度
+LARGE_ERR_THRESHOLD = 0.62  # 进入大误差限速的误差阈值
+SEVERE_ERR_THRESHOLD = 0.82  # 进入严重误差限速的误差阈值
 
 STRAIGHT_PARAMS = {
     "target_speed": 0.88,  # 直道目标速度
@@ -116,30 +116,30 @@ STARTUP_PARAMS = {
 TURN_PARAMS = {
     "target_speed": 1.00,  # 弯道目标速度
     "min_speed": 0.56,  # 弯道最低速度
-    "max_steer": 0.72,  # 弯道最大转角
+    "max_steer": 0.74,  # 弯道最大转角
     "deadband": 0.00,  # 弯道误差死区
-    "turn_speed_drop": 0.024,  # 弯道误差降速系数
-    "pid_kp": 1.04,
+    "turn_speed_drop": 0.028,  # 弯道误差降速系数
+    "pid_kp": 1.06,
     "pid_ki": 0.02,
-    "pid_kd": 0.13,
+    "pid_kd": 0.14,
     "pid_integral_limit": STRAIGHT_PARAMS["pid_integral_limit"],
-    "steer_rate_limit": 0.25,  # 弯道单帧转角变化限制
+    "steer_rate_limit": 0.26,  # 弯道单帧转角变化限制
     "sharp_turn_err": 0.55,  # 弯道大误差强制补转向阈值
-    "sharp_turn_steer": 0.47,  # 弯道大误差时的最小转角
+    "sharp_turn_steer": 0.50,  # 弯道大误差时的最小转角
 }
 
 # 丢线恢复参数
-RECOVERY_FRAMES = 42  # 最多尝试恢复的帧数
-RECOVERY_EDGE_FRAMES = 16  # 边缘丢线后继续原方向恢复的帧数
-RECOVERY_SPEED = 0.06  # 丢线恢复速度
-RECOVERY_CONTINUE_GAIN = 0.90  # 边缘丢线时沿上次转角继续的比例
-RECOVERY_REVERSE_GAIN = 0.85  # 非边缘丢线时反向搜索的比例
-RECOVERY_MIN_STEER = 0.18  # 恢复时最小转角
-RECOVERY_MAX_STEER = 0.34  # 恢复时最大转角
+RECOVERY_FRAMES = 60  # 最多尝试恢复的帧数
+RECOVERY_EDGE_FRAMES = 24  # 边缘丢线后继续原方向恢复的帧数
+RECOVERY_SPEED = 0.08  # 丢线恢复速度
+RECOVERY_CONTINUE_GAIN = 1.00  # 边缘丢线时沿上次转角继续的比例
+RECOVERY_REVERSE_GAIN = 0.95  # 非边缘丢线时反向搜索的比例
+RECOVERY_MIN_STEER = 0.22  # 恢复时最小转角
+RECOVERY_MAX_STEER = 0.42  # 恢复时最大转角
 RECOVERY_SOURCE_STEER_MIN = 0.03  # 上次转角超过该值才作为恢复方向依据
 RECOVERY_ERR_FALLBACK = 0.08  # 无有效上次转角时，用历史误差恢复的阈值
-RECOVERY_EDGE_RAW_ERR = 0.82  # 原始误差超过该值认为是边缘丢线
-RECOVERY_EDGE_LINE_ERR = 0.50  # 线误差超过该值认为是边缘丢线
+RECOVERY_EDGE_RAW_ERR = 0.35  # 原始误差超过该值认为是边缘丢线
+RECOVERY_EDGE_LINE_ERR = 0.30  # 线误差超过该值认为是边缘丢线
 
 # 调试输出参数
 DEBUG_OUTPUT = True  # 是否输出ROS节流日志
@@ -147,7 +147,7 @@ DEBUG_PERIOD = 0.5  # 日志节流周期，单位秒
 DEBUG_DRAW = False  # 是否在图像上绘制5行关键调试文字，默认关闭以提高帧率
 DEBUG_SHOW_MASKS = False  # 是否显示ROI和路面mask调试窗口，跑速度时应关闭
 DEBUG_DRAW_MARKERS = True  # 是否在camera画面上绘制目标线和检测质心
-DEBUG_VERSION = "direct_line_near_curve_multiroi_v17_stable_speed_push"  # 当前调试版本标识
+DEBUG_VERSION = "direct_line_near_curve_multiroi_v18_speed_guard_recovery"  # 当前调试版本标识
 
 # 滑轨可调参数说明：
 # 数值后带 x100 的滑轨采用百分制缩放，例如滑轨值 60 表示实际参数 0.60。
