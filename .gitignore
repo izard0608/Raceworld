@@ -1,0 +1,40 @@
+# Catkin / ROS build outputs
+build/
+devel/
+install/
+.catkin_tools/
+
+# ROS runtime artifacts
+log/
+logs/
+roslogs/
+*.bag
+*.bag.active
+
+# Python cache and test artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Logs and temporary files
+log.txt
+*.log
+*.tmp
+*.temp
+
+# Editor and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

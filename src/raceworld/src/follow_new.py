@@ -6,9 +6,8 @@ import rospy
 from sensor_msgs.msg import Image
 from ackermann_msgs.msg import AckermannDriveStamped
 
-# 全局速度与MPC搜索参数
+# 全局速度参数
 MAX_SPEED = 0.80  # 全局最高速度上限
-STEER_STEP = 0.04  # MPC枚举转角的步长，越小越细但计算越慢
 
 # 图像ROI参数：ratio越大，ROI越靠近图像下方，也就是看得越近
 ROI_TOP_RATIO_BASE = 0.58  # 初始ROI顶部比例
@@ -30,6 +29,7 @@ ROAD_MIN_ROWS = 12  # 有效路面行数下限
 ROAD_MAX_S = 75  # 路面HSV饱和度上限，偏灰色区域
 ROAD_MIN_V = 35  # 路面HSV亮度下限
 ROAD_MAX_V = 145  # 路面HSV亮度上限
+ROAD_FEATURE_INTERVAL = 3  # 黄线可靠时每隔几帧更新一次路面兜底特征，降低每帧扫描开销
 
 # 曲率与多ROI参数
 CURVE_MIN_POINTS = 80  # 曲率拟合所需最少mask点数
@@ -54,9 +54,10 @@ STARTUP_FAST_BLOCK_FRAMES = 12  # 缓启动退出后暂时禁止高速，避免�
 STRAIGHT_STEER_SPEED_GAIN_MIN = 0.68  # 直道最高速时PID转角倍率下限
 
 # 控制模型参数
-MPC_HORIZON = 7  # MPC预测步数
-DT = 0.08  # 控制周期估计值
-L = 0.32  # 车辆轴距，用于简化自行车模型
+DT = 1.0 / 30.0  # Fallback control period when image timestamps are invalid.
+DT_MIN = 0.01  # Clamp very small frame intervals to reduce derivative spikes.
+DT_MAX = 0.10  # Clamp stalls or simulator pauses to avoid integral jumps.
+L = 0.164  # Wheelbase from car.xacro: 0.082311 - (-0.081663).
 
 # 误差处理参数
 LINE_TARGET_ERR = 0.0  # 目标横向误差，0表示让线位于图像中心
@@ -72,18 +73,15 @@ LARGE_ERR_THRESHOLD = 0.35  # 进入大误差限速的误差阈值
 SEVERE_ERR_THRESHOLD = 0.60  # 进入严重误差限速的误差阈值
 
 STRAIGHT_PARAMS = {
-    "target_speed": 0.52,  # 直道目标速度
+    "target_speed": 0.60,  # 直道目标速度
     "min_speed": 0.20,  # 直道最低速度
-    "max_steer": 0.28,  # 直道最大转角
+    "max_steer": 0.25,  # 直道最大转角
     "deadband": 0.08,  # 直道误差死区，小于该值按0处理
     "turn_speed_drop": 0.20,  # 误差越大速度越低的降速系数
     "pid_kp": 0.76,  # 直道PID比例系数
-    "pid_ki": 0.02,  # 直道PID积分系数
+    "pid_ki": 0.01,  # 直道PID积分系数
     "pid_kd": 0.10,  # 直道PID微分系数
     "pid_integral_limit": 0.60,  # PID积分限幅，防止积分饱和
-    "predict_err_gain": 5.0,  # MPC横向误差预测增益
-    "steer_cost": 0.80,  # MPC转角惩罚，越大越不愿大幅打角
-    "steer_change_cost": 1.20,  # MPC转角变化惩罚，越大转向越平滑
     "steer_rate_limit": 0.08,  # 单帧转角变化限制
     "sharp_turn_err": 0.75,  # 大误差强制补转向的触发阈值
     "sharp_turn_steer": 0.18,  # 大误差时的最小转角
@@ -99,27 +97,21 @@ STARTUP_PARAMS = {
     "pid_ki": 0.00,  # 缓启动不使用积分，避免初始偏差造成积分累积
     "pid_kd": 0.12,  # 缓启动PID微分系数
     "pid_integral_limit": 0.30,  # 缓启动积分限幅
-    "predict_err_gain": 5.0,  # 保持参数结构一致，缓启动阶段不进入MPC
-    "steer_cost": 0.90,  # 保持参数结构一致，缓启动阶段不进入MPC
-    "steer_change_cost": 1.40,  # 保持参数结构一致，缓启动阶段不进入MPC
     "steer_rate_limit": 0.06,  # 缓启动转向变化限制，起步更平滑
     "sharp_turn_err": 0.60,  # 缓启动大误差强制补转向阈值
     "sharp_turn_steer": 0.16,  # 缓启动大误差时的最小转角
 }
 
 TURN_PARAMS = {
-    "target_speed": 0.38,  # 弯道目标速度
-    "min_speed": 0.10,  # 弯道最低速度
-    "max_steer": 0.40,  # 弯道最大转角
-    "deadband": 0.03,  # 弯道误差死区
-    "turn_speed_drop": 0.12,  # 弯道误差降速系数
-    "pid_kp": STRAIGHT_PARAMS["pid_kp"],
-    "pid_ki": STRAIGHT_PARAMS["pid_ki"],
-    "pid_kd": STRAIGHT_PARAMS["pid_kd"],
+    "target_speed": 0.60,  # 弯道目标速度
+    "min_speed": 0.40,  # 弯道最低速度
+    "max_steer": 0.50,  # 弯道最大转角
+    "deadband": 0.00,  # 弯道误差死区
+    "turn_speed_drop": 0.05,  # 弯道误差降速系数
+    "pid_kp": 0.76,
+    "pid_ki": 0.02,
+    "pid_kd": 0.10,
     "pid_integral_limit": STRAIGHT_PARAMS["pid_integral_limit"],
-    "predict_err_gain": 7.0,  # 弯道MPC横向误差预测增益
-    "steer_cost": 0.65,  # 弯道MPC转角惩罚
-    "steer_change_cost": 0.90,  # 弯道MPC转角变化惩罚
     "steer_rate_limit": 0.14,  # 弯道单帧转角变化限制
     "sharp_turn_err": 0.55,  # 弯道大误差强制补转向阈值
     "sharp_turn_steer": 0.30,  # 弯道大误差时的最小转角
@@ -141,10 +133,87 @@ RECOVERY_EDGE_LINE_ERR = 0.50  # 线误差超过该值认为是边缘丢线
 # 调试输出参数
 DEBUG_OUTPUT = True  # 是否输出ROS节流日志
 DEBUG_PERIOD = 0.5  # 日志节流周期，单位秒
-DEBUG_DRAW = True  # 是否在图像上绘制5行关键调试文字
+DEBUG_DRAW = False  # 是否在图像上绘制5行关键调试文字，默认关闭以提高帧率
 DEBUG_SHOW_MASKS = False  # 是否显示ROI和路面mask调试窗口，跑速度时应关闭
 DEBUG_DRAW_MARKERS = True  # 是否在camera画面上绘制目标线和检测质心
 DEBUG_VERSION = "direct_line_near_curve_multiroi_v10_turn_speed_up3"  # 当前调试版本标识
+
+# 滑轨可调参数说明：
+# 数值后带 x100 的滑轨采用百分制缩放，例如滑轨值 60 表示实际参数 0.60。
+# Rec frames 是恢复帧数，Show/Draw 类滑轨是 0/1 开关。
+# - Speed cap x100：全局速度上限，限制所有正常循迹模式的最高指令速度。
+# - Error filter alpha x100：横向误差低通滤波系数，越大越相信当前帧，越小越平滑。
+# - Steer gain floor x100：直道高速时的最小转向增益，防止高速下转向过猛。
+# - Straight target speed x100：直道目标速度。
+# - Straight min speed x100：直道最低速度，误差较大时也不会低于该值。
+# - Straight max steer x100：直道最大转角限幅。
+# - Straight error deadband x100：直道误差死区，小误差在控制中按 0 处理。
+# - Straight error speed drop x100：直道误差降速系数，横向误差越大速度降得越多。
+# - Straight PID Kp/Ki/Kd x100：直道 PID 的比例、积分、微分系数。
+# - Straight steer rate x100：直道单帧最大转角变化量，限制方向变化速度。
+# - Turn target speed x100：弯道目标速度。
+# - Turn min speed x100：弯道最低速度，弯中降速后也不会低于该值。
+# - Turn max steer x100：弯道最大转角限幅。
+# - Turn error deadband x100：弯道误差死区。
+# - Turn error speed drop x100：弯道误差降速系数。
+# - Turn PID Kp/Ki/Kd x100：弯道 PID 的比例、积分、微分系数。
+# - Turn steer rate x100：弯道单帧最大转角变化量。
+# - Startup target speed x100：启动阶段目标速度。
+# - Startup max steer x100：启动阶段最大转角限幅。
+# - Startup PID Kp/Kd x100：启动阶段 PID 的比例和微分系数。
+# - Recovery speed x100：丢线恢复时的速度。
+# - Recovery min steer x100：丢线恢复时的最小搜索转角。
+# - Recovery max steer x100：丢线恢复时的最大搜索转角。
+# - Recovery continue gain x100：边缘丢线时沿上次转向继续搜索的增益。
+# - Recovery reverse gain x100：非边缘丢线时反向搜索的增益。
+# - Recovery frame count：丢线后最多执行恢复动作的帧数。
+# - Show mask windows：是否显示 ROI 和路面 mask 调试窗口。
+# - Draw debug text：是否在相机画面叠加调试文字。
+# - Draw target markers：是否在相机画面绘制目标线和检测质心标记。
+
+# OpenCV control tuning. Trackbars live in a separate window so the camera
+# image remains visible while control parameters are adjusted.
+CAMERA_WINDOW = "camera"
+TUNING_WINDOW = "control tuning"
+TUNING_ENABLED = True
+TUNING_TRACKBARS = (
+    ("Max speed x100", "Speed cap x100", int(round(MAX_SPEED * 100)), 120),
+    ("Err alpha x100", "Error filter alpha x100", int(round(ERR_ALPHA * 100)), 100),
+    ("Steer gain min x100", "Steer gain floor x100", int(round(STRAIGHT_STEER_SPEED_GAIN_MIN * 100)), 100),
+    ("S speed x100", "Straight target speed x100", int(round(STRAIGHT_PARAMS["target_speed"] * 100)), 120),
+    ("S min x100", "Straight min speed x100", int(round(STRAIGHT_PARAMS["min_speed"] * 100)), 100),
+    ("S steer x100", "Straight max steer x100", int(round(STRAIGHT_PARAMS["max_steer"] * 100)), 100),
+    ("S dead x100", "Straight error deadband x100", int(round(STRAIGHT_PARAMS["deadband"] * 100)), 100),
+    ("S drop x100", "Straight error speed drop x100", int(round(STRAIGHT_PARAMS["turn_speed_drop"] * 100)), 100),
+    ("S kp x100", "Straight PID Kp x100", int(round(STRAIGHT_PARAMS["pid_kp"] * 100)), 300),
+    ("S ki x100", "Straight PID Ki x100", int(round(STRAIGHT_PARAMS["pid_ki"] * 100)), 100),
+    ("S kd x100", "Straight PID Kd x100", int(round(STRAIGHT_PARAMS["pid_kd"] * 100)), 200),
+    ("S rate x100", "Straight steer rate x100", int(round(STRAIGHT_PARAMS["steer_rate_limit"] * 100)), 100),
+    ("T speed x100", "Turn target speed x100", int(round(TURN_PARAMS["target_speed"] * 100)), 120),
+    ("T min x100", "Turn min speed x100", int(round(TURN_PARAMS["min_speed"] * 100)), 100),
+    ("T steer x100", "Turn max steer x100", int(round(TURN_PARAMS["max_steer"] * 100)), 100),
+    ("T dead x100", "Turn error deadband x100", int(round(TURN_PARAMS["deadband"] * 100)), 100),
+    ("T drop x100", "Turn error speed drop x100", int(round(TURN_PARAMS["turn_speed_drop"] * 100)), 100),
+    ("T kp x100", "Turn PID Kp x100", int(round(TURN_PARAMS["pid_kp"] * 100)), 300),
+    ("T ki x100", "Turn PID Ki x100", int(round(TURN_PARAMS["pid_ki"] * 100)), 100),
+    ("T kd x100", "Turn PID Kd x100", int(round(TURN_PARAMS["pid_kd"] * 100)), 200),
+    ("T rate x100", "Turn steer rate x100", int(round(TURN_PARAMS["steer_rate_limit"] * 100)), 100),
+    ("U speed x100", "Startup target speed x100", int(round(STARTUP_PARAMS["target_speed"] * 100)), 80),
+    ("U steer x100", "Startup max steer x100", int(round(STARTUP_PARAMS["max_steer"] * 100)), 100),
+    ("U kp x100", "Startup PID Kp x100", int(round(STARTUP_PARAMS["pid_kp"] * 100)), 300),
+    ("U kd x100", "Startup PID Kd x100", int(round(STARTUP_PARAMS["pid_kd"] * 100)), 200),
+    ("Rec speed x100", "Recovery speed x100", int(round(RECOVERY_SPEED * 100)), 50),
+    ("Rec min steer x100", "Recovery min steer x100", int(round(RECOVERY_MIN_STEER * 100)), 100),
+    ("Rec max steer x100", "Recovery max steer x100", int(round(RECOVERY_MAX_STEER * 100)), 100),
+    ("Rec cont x100", "Recovery continue gain x100", int(round(RECOVERY_CONTINUE_GAIN * 100)), 200),
+    ("Rec rev x100", "Recovery reverse gain x100", int(round(RECOVERY_REVERSE_GAIN * 100)), 200),
+    ("Rec frames", "Recovery frame count", RECOVERY_FRAMES, 120),
+    ("Show masks", "Show mask windows", int(DEBUG_SHOW_MASKS), 1),
+    ("Draw debug", "Draw debug text", int(DEBUG_DRAW), 1),
+    ("Draw marks", "Draw target markers", int(DEBUG_DRAW_MARKERS), 1),
+)
+TUNING_LABELS = {name: label for name, label, _, _ in TUNING_TRACKBARS}
+TUNING_DEFAULTS = {name: default for name, _, default, _ in TUNING_TRACKBARS}
 
 prev_err = 0.0
 prev_steer = 0.0
@@ -156,6 +225,8 @@ roi_candidate_target_ratio = ROI_TOP_RATIO_BASE
 roi_candidate_count = 0
 pid_integral = 0.0
 pid_prev_err = 0.0
+control_dt = DT
+last_frame_time = None
 control_mode = "straight"
 lost_count = 0
 startup_active = True
@@ -163,11 +234,217 @@ startup_stable_count = 0
 startup_target_err = None
 normal_frame_count = 0
 debug_info = {}
+tuning_initialized = False
+camera_window_initialized = False
+vision_frame_count = 0
+last_debug_log_time = 0.0
+bridge = None
+
+
+def on_tuning_change(_value):
+    pass
+
+
+def update_control_dt(stamp=None):
+    global control_dt, last_frame_time
+
+    if stamp is None:
+        stamp = rospy.Time.now()
+
+    stamp_sec = stamp.to_sec()
+    if stamp_sec <= 0.0:
+        stamp_sec = rospy.Time.now().to_sec()
+
+    if last_frame_time is None or stamp_sec <= last_frame_time:
+        control_dt = DT
+    else:
+        raw_dt = stamp_sec - last_frame_time
+        control_dt = max(DT_MIN, min(DT_MAX, raw_dt))
+
+    last_frame_time = stamp_sec
+    debug_info["control_dt"] = control_dt
+    return control_dt
+
+
+def ensure_tuning_controls():
+    global tuning_initialized
+
+    if tuning_initialized or not TUNING_ENABLED:
+        return
+
+    cv2.namedWindow(TUNING_WINDOW, 0)
+    for name, label, default, maximum in TUNING_TRACKBARS:
+        cv2.createTrackbar(label, TUNING_WINDOW, default, maximum, on_tuning_change)
+    tuning_initialized = True
+
+
+def get_tuning_value(name):
+    if not TUNING_ENABLED or not tuning_initialized:
+        return TUNING_DEFAULTS[name]
+
+    try:
+        return cv2.getTrackbarPos(TUNING_LABELS[name], TUNING_WINDOW)
+    except cv2.error:
+        return TUNING_DEFAULTS[name]
+
+
+def get_tuning_float(name, scale=100.0, minimum=0.0, maximum=None):
+    value = get_tuning_value(name) / scale
+    value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
+    return value
+
+
+def fixed_yellow_bounds():
+    lower = numpy.array([26, 43, 46], dtype=numpy.uint8)
+    upper = numpy.array([34, 255, 255], dtype=numpy.uint8)
+    debug_info["yellow_h_min"] = int(lower[0])
+    debug_info["yellow_h_max"] = int(upper[0])
+    debug_info["yellow_s_min"] = int(lower[1])
+    debug_info["yellow_s_max"] = int(upper[1])
+    debug_info["yellow_v_min"] = int(lower[2])
+    debug_info["yellow_v_max"] = int(upper[2])
+    return lower, upper
+
+
+def fixed_road_bounds():
+    lower = numpy.array([0, 0, ROAD_MIN_V], dtype=numpy.uint8)
+    upper = numpy.array([179, ROAD_MAX_S, ROAD_MAX_V], dtype=numpy.uint8)
+    debug_info["road_s_max"] = ROAD_MAX_S
+    debug_info["road_v_min"] = ROAD_MIN_V
+    debug_info["road_v_max"] = ROAD_MAX_V
+    return lower, upper
+
+
+def current_min_mask_area():
+    debug_info["min_mask_area"] = MIN_MASK_AREA
+    return MIN_MASK_AREA
+
+
+def current_road_min_area():
+    debug_info["road_min_area"] = ROAD_MIN_AREA
+    return ROAD_MIN_AREA
+
+
+def current_roi_height():
+    debug_info["roi_height"] = ROI_HEIGHT
+    return ROI_HEIGHT
+
+
+def current_max_speed():
+    value = get_tuning_float("Max speed x100", minimum=0.0)
+    debug_info["tune_max_speed"] = value
+    return value
+
+
+def current_err_alpha():
+    value = get_tuning_float("Err alpha x100", minimum=0.0, maximum=1.0)
+    debug_info["tune_err_alpha"] = value
+    return value
+
+
+def current_steer_gain_min():
+    value = get_tuning_float("Steer gain min x100", minimum=0.0, maximum=1.0)
+    debug_info["tune_steer_gain_min"] = value
+    return value
+
+
+def tuned_mode_params(base_params, prefix, label):
+    params = dict(base_params)
+    params["target_speed"] = get_tuning_float("{} speed x100".format(prefix), minimum=0.0)
+    if prefix in ("S", "T"):
+        params["min_speed"] = get_tuning_float("{} min x100".format(prefix), minimum=0.0)
+        params["deadband"] = get_tuning_float("{} dead x100".format(prefix), minimum=0.0)
+        params["turn_speed_drop"] = get_tuning_float("{} drop x100".format(prefix), minimum=0.0)
+        params["steer_rate_limit"] = get_tuning_float("{} rate x100".format(prefix), minimum=0.0)
+
+    params["max_steer"] = get_tuning_float("{} steer x100".format(prefix), minimum=0.0)
+    params["pid_kp"] = get_tuning_float("{} kp x100".format(prefix), minimum=0.0)
+    if prefix in ("S", "T"):
+        params["pid_ki"] = get_tuning_float("{} ki x100".format(prefix), minimum=0.0)
+    params["pid_kd"] = get_tuning_float("{} kd x100".format(prefix), minimum=0.0)
+
+    if params["min_speed"] > params["target_speed"]:
+        params["min_speed"] = params["target_speed"]
+
+    debug_info["tune_mode"] = label
+    debug_info["tune_target_speed"] = params["target_speed"]
+    debug_info["tune_min_speed"] = params["min_speed"]
+    debug_info["tune_max_steer"] = params["max_steer"]
+    debug_info["tune_deadband"] = params["deadband"]
+    debug_info["tune_speed_drop"] = params["turn_speed_drop"]
+    debug_info["tune_pid_kp"] = params["pid_kp"]
+    debug_info["tune_pid_ki"] = params["pid_ki"]
+    debug_info["tune_pid_kd"] = params["pid_kd"]
+    debug_info["tune_steer_rate"] = params["steer_rate_limit"]
+    return params
+
+
+def current_straight_params():
+    return tuned_mode_params(STRAIGHT_PARAMS, "S", "straight")
+
+
+def current_turn_params():
+    return tuned_mode_params(TURN_PARAMS, "T", "turn")
+
+
+def current_startup_params():
+    return tuned_mode_params(STARTUP_PARAMS, "U", "startup")
+
+
+def current_recovery_params():
+    min_steer = get_tuning_float("Rec min steer x100", minimum=0.0)
+    max_steer = get_tuning_float("Rec max steer x100", minimum=min_steer)
+    params = {
+        "speed": get_tuning_float("Rec speed x100", minimum=0.0),
+        "min_steer": min_steer,
+        "max_steer": max_steer,
+        "continue_gain": get_tuning_float("Rec cont x100", minimum=0.0),
+        "reverse_gain": get_tuning_float("Rec rev x100", minimum=0.0),
+        "frames": max(0, get_tuning_value("Rec frames")),
+    }
+    debug_info["tune_recovery_speed"] = params["speed"]
+    debug_info["tune_recovery_min_steer"] = params["min_steer"]
+    debug_info["tune_recovery_max_steer"] = params["max_steer"]
+    debug_info["tune_recovery_continue_gain"] = params["continue_gain"]
+    debug_info["tune_recovery_reverse_gain"] = params["reverse_gain"]
+    debug_info["tune_recovery_frames"] = params["frames"]
+    return params
+
+
+def current_show_masks():
+    return get_tuning_value("Show masks") > 0
+
+
+def current_draw_debug():
+    return get_tuning_value("Draw debug") > 0
+
+
+def current_draw_markers():
+    return get_tuning_value("Draw marks") > 0
+
+
+def ensure_camera_window():
+    global camera_window_initialized
+
+    if camera_window_initialized:
+        return
+
+    cv2.namedWindow(CAMERA_WINDOW, 0)
+    camera_window_initialized = True
+
+
+def show_camera_frame(image):
+    ensure_tuning_controls()
+    ensure_camera_window()
+    cv2.imshow(CAMERA_WINDOW, image)
+    cv2.waitKey(1)
 
 
 def roi_bounds(h, ratio):
     search_top = int(ratio * h)
-    search_bot = min(h, search_top + ROI_HEIGHT)
+    search_bot = min(h, search_top + current_roi_height())
     return search_top, search_bot
 
 
@@ -297,8 +574,7 @@ def estimate_line_curvature(mask, w, canvas_mask=None):
 
 
 def estimate_road_features(hsv, h, w):
-    lower_road = numpy.array([0, 0, ROAD_MIN_V])
-    upper_road = numpy.array([179, ROAD_MAX_S, ROAD_MAX_V])
+    lower_road, upper_road = fixed_road_bounds()
     road_mask = cv2.inRange(hsv, lower_road, upper_road)
     road_mask = set_roi_forward(h, w, road_mask)
     road_mask = cv2.medianBlur(road_mask, 5)
@@ -307,7 +583,7 @@ def estimate_road_features(hsv, h, w):
 
     road_area = cv2.countNonZero(road_mask)
     debug_info["road_area"] = road_area
-    if road_area < ROAD_MIN_AREA:
+    if road_area < current_road_min_area():
         debug_info["road_valid"] = False
         debug_info["road_rows"] = 0
         debug_info["road_err"] = 0.0
@@ -441,11 +717,12 @@ def update_roi_top_ratio(line_found, curvature):
 
 
 def estimate_lane_error(image):
-    global debug_info
+    global debug_info, vision_frame_count
+
+    vision_frame_count += 1
 
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    lower_yellow = numpy.array([26, 43, 46])
-    upper_yellow = numpy.array([34, 255, 255])
+    lower_yellow, upper_yellow = fixed_yellow_bounds()
     yellow_base_mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
     yellow_base_mask = cv2.medianBlur(yellow_base_mask, 5)
 
@@ -455,17 +732,28 @@ def estimate_lane_error(image):
     mask = cv2.GaussianBlur(mask, (5, 5), 0)
     yellow_canvas_mask = cv2.GaussianBlur(yellow_base_mask, (5, 5), 0)
     estimate_mode_curvature(yellow_canvas_mask, w)
-    road_mask = estimate_road_features(hsv, h, w)
-
-    if DEBUG_SHOW_MASKS:
-        cv2.namedWindow("region of interest", 0)
-        cv2.imshow("region of interest", mask)
-        cv2.namedWindow("road mask", 0)
-        cv2.imshow("road mask", road_mask)
 
     M = cv2.moments(mask)
     debug_info["mask_area"] = M["m00"] / 255.0
-    if debug_info["mask_area"] < MIN_MASK_AREA:
+    show_masks = current_show_masks()
+    yellow_reliable = debug_info["mask_area"] >= current_min_mask_area()
+    force_road_update = show_masks or not yellow_reliable
+    road_update_due = vision_frame_count % max(1, ROAD_FEATURE_INTERVAL) == 0
+    road_mask = None
+    if force_road_update or road_update_due:
+        road_mask = estimate_road_features(hsv, h, w)
+        debug_info["road_feature_updated"] = True
+    else:
+        debug_info["road_feature_updated"] = False
+
+    if show_masks:
+        cv2.namedWindow("region of interest", 0)
+        cv2.imshow("region of interest", mask)
+        if road_mask is not None:
+            cv2.namedWindow("road mask", 0)
+            cv2.imshow("road mask", road_mask)
+
+    if not yellow_reliable:
         debug_info["curve_valid"] = False
         debug_info["line_curvature"] = 0.0
         debug_info["fast_curve_layers"] = 0
@@ -525,37 +813,6 @@ def estimate_lane_error(image):
     return err, w
 
 
-def mpc_steering(err, speed_cmd, params):
-    global debug_info
-
-    v = max(0.05, speed_cmd)
-    best_delta = 0.0
-    best_cost = float("inf")
-    candidate_count = 0
-
-    # Hand-written receding-horizon MPC: test constant steering candidates.
-    max_steer = params["max_steer"]
-    for delta in numpy.arange(-max_steer, max_steer + 1e-6, STEER_STEP):
-        candidate_count += 1
-        y = err
-        psi = 0.0
-        cost = 0.0
-        for _ in range(MPC_HORIZON):
-            y += params["predict_err_gain"] * DT * v * psi
-            psi += DT * (v / L) * numpy.tan(delta)
-            cost += 16.0 * y * y + 1.5 * psi * psi + params["steer_cost"] * delta * delta
-
-        cost += 25.0 * y * y
-        cost += params["steer_change_cost"] * (delta - prev_steer) * (delta - prev_steer)
-        if cost < best_cost:
-            best_cost = cost
-            best_delta = float(delta)
-
-    debug_info["mpc_cost"] = best_cost
-    debug_info["mpc_candidates"] = candidate_count
-    return best_delta
-
-
 def limit_steer_rate(target_steer, params):
     if abs(target_steer) < 1e-6:
         return 0.45 * prev_steer
@@ -566,24 +823,24 @@ def limit_steer_rate(target_steer, params):
     return prev_steer + steer_delta
 
 
-def recovery_steering():
+def recovery_steering(params):
     if abs(prev_steer) > RECOVERY_SOURCE_STEER_MIN:
         edge_lost = abs(last_raw_err) > RECOVERY_EDGE_RAW_ERR or abs(last_line_err) > RECOVERY_EDGE_LINE_ERR
         if edge_lost and lost_count <= RECOVERY_EDGE_FRAMES:
-            recover_steer = prev_steer * RECOVERY_CONTINUE_GAIN
+            recover_steer = prev_steer * params["continue_gain"]
             recovery_mode = "continue_edge"
         else:
-            recover_steer = -prev_steer * RECOVERY_REVERSE_GAIN
+            recover_steer = -prev_steer * params["reverse_gain"]
             recovery_mode = "reverse"
-        if abs(recover_steer) < RECOVERY_MIN_STEER:
-            recover_steer = RECOVERY_MIN_STEER if recover_steer > 0.0 else -RECOVERY_MIN_STEER
+        if abs(recover_steer) < params["min_steer"]:
+            recover_steer = params["min_steer"] if recover_steer > 0.0 else -params["min_steer"]
     elif abs(prev_err) > RECOVERY_ERR_FALLBACK:
-        recover_steer = RECOVERY_MIN_STEER if prev_err > 0.0 else -RECOVERY_MIN_STEER
+        recover_steer = params["min_steer"] if prev_err > 0.0 else -params["min_steer"]
         recovery_mode = "reverse_err"
     else:
         return None, "stop"
 
-    recover_steer = max(-RECOVERY_MAX_STEER, min(RECOVERY_MAX_STEER, recover_steer))
+    recover_steer = max(-params["max_steer"], min(params["max_steer"], recover_steer))
     return recover_steer, recovery_mode
 
 
@@ -591,7 +848,8 @@ def straight_speed_steer_gain(speed_cmd, params):
     speed_span = max(1e-6, params["target_speed"] - params["min_speed"])
     speed_ratio = (speed_cmd - params["min_speed"]) / speed_span
     speed_ratio = max(0.0, min(1.0, speed_ratio))
-    gain = 1.0 - (1.0 - STRAIGHT_STEER_SPEED_GAIN_MIN) * speed_ratio
+    min_gain = current_steer_gain_min()
+    gain = 1.0 - (1.0 - min_gain) * speed_ratio
     debug_info["speed_steer_gain"] = gain
     return gain
 
@@ -599,15 +857,16 @@ def straight_speed_steer_gain(speed_cmd, params):
 def pid_steering(err, params, steer_gain=1.0):
     global pid_integral, pid_prev_err, debug_info
 
+    dt = control_dt
     if abs(err) < params["deadband"]:
         err = 0.0
         pid_integral *= 0.5
     else:
-        pid_integral += err * DT
+        pid_integral += err * dt
         limit = params["pid_integral_limit"]
         pid_integral = max(-limit, min(limit, pid_integral))
 
-    d_err = (err - pid_prev_err) / DT
+    d_err = (err - pid_prev_err) / dt
     pid_prev_err = err
 
     p_term = params["pid_kp"] * err
@@ -620,8 +879,6 @@ def pid_steering(err, params, steer_gain=1.0):
     debug_info["pid_p"] = p_term
     debug_info["pid_i"] = i_term
     debug_info["pid_d"] = d_term
-    debug_info["mpc_cost"] = 0.0
-    debug_info["mpc_candidates"] = 0
     return steer
 
 
@@ -699,13 +956,13 @@ def select_control_params(curvature):
     if startup_active:
         control_mode = "straight"
         debug_info["mode"] = "startup"
-        return STARTUP_PARAMS
+        return current_startup_params()
 
     if not debug_info.get("mode_curve_valid", False):
         debug_info["mode"] = control_mode
         if control_mode == "turn":
-            return TURN_PARAMS
-        return STRAIGHT_PARAMS
+            return current_turn_params()
+        return current_straight_params()
 
     abs_curve = abs(curvature)
     mode_exit_err = max(abs(debug_info.get("raw_err", 0.0)), abs(debug_info.get("filtered_err", 0.0)))
@@ -722,8 +979,8 @@ def select_control_params(curvature):
 
     debug_info["mode"] = control_mode
     if control_mode == "turn":
-        return TURN_PARAMS
-    return STRAIGHT_PARAMS
+        return current_turn_params()
+    return current_straight_params()
 
 
 def speed_target_for(params, err):
@@ -745,10 +1002,11 @@ def speed_target_for(params, err):
         fast_confidence = False
     elif fast_confidence:
         target_speed = min(
-            MAX_SPEED,
+            current_max_speed(),
             target_speed + FAST_SPEED_BOOST + FAST_CURVE_LAYER_STEP * max(0, fast_curve_layers - 1),
         )
 
+    target_speed = min(target_speed, current_max_speed())
     if debug_info.get("vision_source", "") == "road":
         target_speed = min(target_speed, ROAD_FALLBACK_MAX_SPEED)
         if control_mode == "turn":
@@ -760,6 +1018,7 @@ def speed_target_for(params, err):
     elif abs_err >= LARGE_ERR_THRESHOLD:
         target_speed = min(target_speed, LARGE_ERR_SPEED_LIMIT)
 
+    params["min_speed"] = min(params["min_speed"], target_speed)
     debug_info["fast_confidence"] = fast_confidence
     debug_info["fast_curve_layers"] = fast_curve_layers
     debug_info["speed_target"] = target_speed
@@ -767,7 +1026,7 @@ def speed_target_for(params, err):
 
 
 def draw_debug(image):
-    if not DEBUG_DRAW:
+    if not current_draw_debug():
         return
 
     lines = [
@@ -805,6 +1064,33 @@ def draw_debug(image):
             debug_info.get("startup", False),
             lost_count,
         ),
+        "tune {} vmax={:.2f} alpha={:.2f} gain_min={:.2f}".format(
+            debug_info.get("tune_mode", ""),
+            debug_info.get("tune_max_speed", 0.0),
+            debug_info.get("tune_err_alpha", 0.0),
+            debug_info.get("tune_steer_gain_min", 0.0),
+        ),
+        "pid kp={:.2f} ki={:.2f} kd={:.2f} dead={:.2f}".format(
+            debug_info.get("tune_pid_kp", 0.0),
+            debug_info.get("tune_pid_ki", 0.0),
+            debug_info.get("tune_pid_kd", 0.0),
+            debug_info.get("tune_deadband", 0.0),
+        ),
+        "limit v={:.2f}/{:.2f} steer={:.2f} rate={:.2f} drop={:.2f}".format(
+            debug_info.get("tune_min_speed", 0.0),
+            debug_info.get("tune_target_speed", 0.0),
+            debug_info.get("tune_max_steer", 0.0),
+            debug_info.get("tune_steer_rate", 0.0),
+            debug_info.get("tune_speed_drop", 0.0),
+        ),
+        "rec v={:.2f} steer={:.2f}-{:.2f} gain={:.2f}/{:.2f} frames={}".format(
+            debug_info.get("tune_recovery_speed", 0.0),
+            debug_info.get("tune_recovery_min_steer", 0.0),
+            debug_info.get("tune_recovery_max_steer", 0.0),
+            debug_info.get("tune_recovery_continue_gain", 0.0),
+            debug_info.get("tune_recovery_reverse_gain", 0.0),
+            debug_info.get("tune_recovery_frames", 0),
+        ),
     ]
 
     for idx, text in enumerate(lines):
@@ -813,93 +1099,53 @@ def draw_debug(image):
 
 
 def log_debug():
+    global last_debug_log_time
+
     if not DEBUG_OUTPUT:
         return
 
-    rospy.loginfo_throttle(
-        DEBUG_PERIOD,
-        "line={} raw_err={:.3f} filt_err={:.3f} ctrl_err={:.3f} speed={:.3f} "
-        "steer_raw={:.3f} steer={:.3f} steer_gain={:.3f} speed_target={:.3f} "
-        "line_target={:.3f} line_err={:.3f} "
-        "curve={:.3f} curve_valid={} curve_pts={} mode_curve={:.3f} mode_curve_valid={} mode_curve_pts={} "
-        "fast_layers={} layer_curves={} "
-        "roi_ratio={:.2f} roi_target={:.2f} roi_src={} roi_layer_y={} "
-        "road_valid={} road_area={} road_err={:.3f} road_curve={:.3f} road_heading={:.3f} "
-        "pos_w={:.3f} pos_err={:.3f} geo_w={:.3f} geo_err={:.3f} "
-        "area={:.0f} cx={} cy={} roi_y={:.3f} y_gain={:.3f} mpc_cost={:.3f} "
-        "candidates={} mode={} startup={} startup_stable={} startup_target={:.3f} "
-        "control={} vision={} curve_src={} fast={} "
-        "pid_p={:.3f} pid_i={:.3f} pid_d={:.3f} "
-        "sharp_turn={} recovery={} reject={} version={}".format(
-            debug_info.get("line_found", False),
+    now = rospy.Time.now().to_sec()
+    if now <= 0.0:
+        now = rospy.get_time()
+    if last_debug_log_time > 0.0 and now - last_debug_log_time < DEBUG_PERIOD:
+        return
+    last_debug_log_time = now
+
+    rospy.loginfo(
+        "mode={} vision={} reject={} err={:.3f}/{:.3f} speed={:.3f}/{:.3f} "
+        "steer={:.3f} curve={:.3f} road={} fast={} lost={} pid={:.2f}/{:.2f}/{:.2f}".format(
+            debug_info.get("mode", ""),
+            debug_info.get("vision_source", ""),
+            debug_info.get("reject_reason", ""),
             debug_info.get("raw_err", 0.0),
-            debug_info.get("filtered_err", 0.0),
             debug_info.get("ctrl_err", 0.0),
             debug_info.get("speed_cmd", 0.0),
-            debug_info.get("raw_steer", 0.0),
-            debug_info.get("steer_cmd", 0.0),
-            debug_info.get("speed_steer_gain", 1.0),
             debug_info.get("speed_target", 0.0),
-            debug_info.get("line_target_err", 0.0),
-            debug_info.get("line_err", 0.0),
+            debug_info.get("steer_cmd", 0.0),
             debug_info.get("control_curvature", 0.0),
-            debug_info.get("control_curve_valid", False),
-            debug_info.get("curve_points", 0),
-            debug_info.get("mode_curvature", 0.0),
-            debug_info.get("mode_curve_valid", False),
-            debug_info.get("mode_curve_points", 0),
-            debug_info.get("fast_curve_layers", 0),
-            debug_info.get("fast_layer_curves", []),
-            debug_info.get("roi_top_ratio", ROI_TOP_RATIO_BASE),
-            debug_info.get("roi_target_ratio", ROI_TOP_RATIO_BASE),
-            debug_info.get("roi_target_source", ""),
-            debug_info.get("roi_layer_target_y", -1),
             debug_info.get("road_valid", False),
-            debug_info.get("road_area", 0),
-            debug_info.get("road_err", 0.0),
-            debug_info.get("road_curvature", 0.0),
-            debug_info.get("road_heading", 0.0),
-            debug_info.get("position_task_weight", 1.0),
-            debug_info.get("position_task_err", 0.0),
-            debug_info.get("geometry_task_weight", 0.0),
-            debug_info.get("geometry_task_err", 0.0),
-            debug_info.get("mask_area", 0.0),
-            debug_info.get("cx", -1),
-            debug_info.get("cy", -1),
-            debug_info.get("roi_y_norm", 1.0),
-            debug_info.get("roi_y_gain", 1.0),
-            debug_info.get("mpc_cost", 0.0),
-            debug_info.get("mpc_candidates", 0),
-            debug_info.get("mode", ""),
-            debug_info.get("startup", False),
-            debug_info.get("startup_stable", 0),
-            debug_info.get("startup_target_err", LINE_TARGET_ERR),
-            debug_info.get("control", ""),
-            debug_info.get("vision_source", ""),
-            debug_info.get("curve_source", ""),
             debug_info.get("fast_confidence", False),
+            lost_count,
             debug_info.get("pid_p", 0.0),
             debug_info.get("pid_i", 0.0),
             debug_info.get("pid_d", 0.0),
-            debug_info.get("sharp_turn", False),
-            debug_info.get("recovery", False),
-            debug_info.get("reject_reason", ""),
-            DEBUG_VERSION,
-        ),
+        )
     )
 
 
 def follow_line(image):
     global pub, prev_err, prev_steer, lost_count, last_raw_err, last_line_err, startup_stable_count, startup_target_err, normal_frame_count
 
+    ensure_tuning_controls()
+    recovery_params = current_recovery_params()
     err, w = estimate_lane_error(image)
     akm = AckermannDriveStamped()
 
     if err is None:
         lost_count += 1
-        recover_steer, recovery_mode = recovery_steering()
-        if lost_count <= RECOVERY_FRAMES and recover_steer is not None:
-            akm.drive.speed = RECOVERY_SPEED
+        recover_steer, recovery_mode = recovery_steering(recovery_params)
+        if lost_count <= recovery_params["frames"] and recover_steer is not None:
+            akm.drive.speed = recovery_params["speed"]
             akm.drive.steering_angle = recover_steer
             debug_info["recovery"] = True
             debug_info["recovery_mode"] = recovery_mode
@@ -917,8 +1163,6 @@ def follow_line(image):
         debug_info["line_err"] = 0.0
         debug_info["filtered_err"] = prev_err
         debug_info["ctrl_err"] = 0.0
-        debug_info["mpc_cost"] = 0.0
-        debug_info["mpc_candidates"] = 0
         debug_info["mode"] = "recovery" if debug_info["recovery"] else "lost"
         debug_info["sharp_turn"] = False
         debug_info["control"] = "recovery" if debug_info["recovery"] else "stop"
@@ -936,24 +1180,10 @@ def follow_line(image):
         debug_info["startup"] = startup_active
         debug_info["startup_stable"] = startup_stable_count
         debug_info["startup_target_err"] = startup_target_err if startup_target_err is not None else LINE_TARGET_ERR
-        rospy.loginfo_throttle(
-            DEBUG_PERIOD,
-            "line lost: recovery={} mode={} lost_count={} speed={:.3f} steer={:.3f} "
-            "last_raw={:.3f} last_line={:.3f}".format(
-                debug_info["recovery"],
-                debug_info["recovery_mode"],
-                lost_count,
-                akm.drive.speed,
-                akm.drive.steering_angle,
-                last_raw_err,
-                last_line_err,
-            ),
-        )
+        log_debug()
         pub.publish(akm)
         draw_debug(image)
-        cv2.namedWindow("camera", 0)
-        cv2.imshow("camera", image)
-        cv2.waitKey(1)
+        show_camera_frame(image)
         return
 
     lost_count = 0
@@ -980,7 +1210,8 @@ def follow_line(image):
         err *= debug_info.get("roi_y_gain", 1.0)
         err = blend_tracking_tasks(err)
     last_line_err = err
-    err = ERR_ALPHA * err + (1.0 - ERR_ALPHA) * prev_err
+    err_alpha = current_err_alpha()
+    err = err_alpha * err + (1.0 - err_alpha) * prev_err
     prev_err = err
     debug_info["filtered_err"] = err
     params = select_control_params(debug_info.get("mode_curvature", 0.0))
@@ -993,16 +1224,8 @@ def follow_line(image):
     speed_cmd = target_speed - params["turn_speed_drop"] * abs(err)
     speed_cmd = max(params["min_speed"], min(target_speed, speed_cmd))
 
-    if control_mode in ("straight", "turn"):
-        steer_gain = straight_speed_steer_gain(speed_cmd, params)
-        steer = pid_steering(err, params, steer_gain)
-    else:
-        debug_info["speed_steer_gain"] = 1.0
-        steer = mpc_steering(err, speed_cmd, params)
-        debug_info["control"] = "mpc"
-        debug_info["pid_p"] = 0.0
-        debug_info["pid_i"] = 0.0
-        debug_info["pid_d"] = 0.0
+    steer_gain = straight_speed_steer_gain(speed_cmd, params)
+    steer = pid_steering(err, params, steer_gain)
 
     steer = max(-params["max_steer"], min(params["max_steer"], steer))
     if abs(err) > params["sharp_turn_err"] and abs(steer) < params["sharp_turn_steer"]:
@@ -1023,7 +1246,7 @@ def follow_line(image):
     pub.publish(akm)
     log_debug()
 
-    if DEBUG_DRAW_MARKERS:
+    if current_draw_markers():
         target_x = int((debug_info.get("line_target_err", LINE_TARGET_ERR) * 0.5 + 0.5) * w)
         cv2.line(image, (target_x, 0), (target_x, image.shape[0]), (255, 0, 0), 2)
         point_cx = debug_info.get("cx", target_x)
@@ -1032,13 +1255,15 @@ def follow_line(image):
             point_cy = image.shape[0] - 30
         cv2.circle(image, (point_cx, point_cy), 8, (0, 0, 255), -1)
     draw_debug(image)
-    cv2.namedWindow("camera", 0)
-    cv2.imshow("camera", image)
-    cv2.waitKey(1)
+    show_camera_frame(image)
 
 
 def image_callback(msg):
-    bridge = cv_bridge.CvBridge()
+    global bridge
+
+    update_control_dt(msg.header.stamp)
+    if bridge is None:
+        bridge = cv_bridge.CvBridge()
     frame = bridge.imgmsg_to_cv2(msg, "bgr8")
     follow_line(frame)
 
