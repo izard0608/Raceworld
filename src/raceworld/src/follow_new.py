@@ -7,7 +7,7 @@ from sensor_msgs.msg import Image
 from ackermann_msgs.msg import AckermannDriveStamped
 
 # 全局速度参数
-MAX_SPEED = 0.95  # 全局最高速度上限
+MAX_SPEED = 1.05  # 全局最高速度上限
 PROCESS_RESIZE_ENABLED = True
 PROCESS_WIDTH = 480
 PROCESS_HEIGHT = 360
@@ -52,13 +52,13 @@ GEOMETRY_ERR_GAIN = 2.0  # 几何朝向误差转换成等效控制误差的倍�
 GEOMETRY_ERR_LIMIT = 0.45  # 几何朝向等效误差限幅
 
 # 直道高速与速度-转向耦合参数
-FAST_SPEED_BOOST = 0.22  # 下1/2曲率接近0时的基础高速加成
-FAST_MAX_ERR = 0.15  # 允许进入高速模式的最大横向误差
-FAST_MAX_CURVE = 0.04  # 允许进入高速模式的最大曲率
-FAST_CONTROL_CURVE_LIMIT = 0.055  # 控制曲率超过该值时禁止直道高速
+FAST_SPEED_BOOST = 0.25  # 下1/2曲率接近0时的基础高速加成
+FAST_MAX_ERR = 0.17  # 允许进入高速模式的最大横向误差
+FAST_MAX_CURVE = 0.045  # 允许进入高速模式的最大曲率
+FAST_CONTROL_CURVE_LIMIT = 0.065  # 控制曲率超过该值时禁止直道高速
 STARTUP_FAST_BLOCK_FRAMES = 12  # 缓启动退出后暂时禁止高速，避免刚入正轨就冲弯
-STRAIGHT_STEER_SPEED_GAIN_MIN = 0.72  # 直道最高速时PID转角倍率下限
-STEER_SPEED_COUPLING = 0.35  # Scale speed down by normalized steering demand.
+STRAIGHT_STEER_SPEED_GAIN_MIN = 0.76  # 直道最高速时PID转角倍率下限
+STEER_SPEED_COUPLING = 0.32  # Scale speed down by normalized steering demand.
 
 # 控制模型参数
 DT = 1.0 / 30.0  # Fallback control period when image timestamps are invalid.
@@ -68,28 +68,28 @@ L = 0.164  # Wheelbase from car.xacro: 0.082311 - (-0.081663).
 
 # 误差处理参数
 LINE_TARGET_ERR = 0.0  # 目标横向误差，0表示让线位于图像中心
-ERR_ALPHA = 0.4  # 横向误差低通滤波系数，越大越相信当前帧
+ERR_ALPHA = 0.45  # 横向误差低通滤波系数，越大越相信当前帧
 STARTUP_TARGET_STEP = 0.015  # 缓启动阶段每帧把目标位置推向图像中心的步长
 STARTUP_TARGET_DONE_ERR = 0.02  # 缓启动目标位置接近中心到该阈值内后退出
 STARTUP_EXIT_RAW_ERR = 0.18  # 缓启动退出时，黄线实际位置也必须接近目标，避免目标到中心但车还没跟上
 ROAD_FALLBACK_MAX_SPEED = 0.24  # 只靠路面兜底时的最高速度，防止黄线丢失后继续高速外冲
 ROAD_FALLBACK_TURN_MAX_SPEED = 0.20  # 弯道且只靠路面兜底时的最高速度
-LARGE_ERR_SPEED_LIMIT = 0.42  # 大横向误差时的最高速度
-SEVERE_ERR_SPEED_LIMIT = 0.28  # 严重横向误差时的最高速度
-LARGE_ERR_THRESHOLD = 0.45  # 进入大误差限速的误差阈值
-SEVERE_ERR_THRESHOLD = 0.68  # 进入严重误差限速的误差阈值
+LARGE_ERR_SPEED_LIMIT = 0.52  # 大横向误差时的最高速度
+SEVERE_ERR_SPEED_LIMIT = 0.34  # 严重横向误差时的最高速度
+LARGE_ERR_THRESHOLD = 0.50  # 进入大误差限速的误差阈值
+SEVERE_ERR_THRESHOLD = 0.72  # 进入严重误差限速的误差阈值
 
 STRAIGHT_PARAMS = {
-    "target_speed": 0.68,  # 直道目标速度
+    "target_speed": 0.72,  # 直道目标速度
     "min_speed": 0.20,  # 直道最低速度
-    "max_steer": 0.28,  # 直道最大转角
-    "deadband": 0.06,  # 直道误差死区，小于该值按0处理
-    "turn_speed_drop": 0.16,  # 误差越大速度越低的降速系数
-    "pid_kp": 0.78,  # 直道PID比例系数
+    "max_steer": 0.30,  # 直道最大转角
+    "deadband": 0.05,  # 直道误差死区，小于该值按0处理
+    "turn_speed_drop": 0.14,  # 误差越大速度越低的降速系数
+    "pid_kp": 0.80,  # 直道PID比例系数
     "pid_ki": 0.01,  # 直道PID积分系数
-    "pid_kd": 0.12,  # 直道PID微分系数
+    "pid_kd": 0.13,  # 直道PID微分系数
     "pid_integral_limit": 0.60,  # PID积分限幅，防止积分饱和
-    "steer_rate_limit": 0.10,  # 单帧转角变化限制
+    "steer_rate_limit": 0.11,  # 单帧转角变化限制
     "sharp_turn_err": 0.75,  # 大误差强制补转向的触发阈值
     "sharp_turn_steer": 0.18,  # 大误差时的最小转角
 }
@@ -110,18 +110,18 @@ STARTUP_PARAMS = {
 }
 
 TURN_PARAMS = {
-    "target_speed": 0.70,  # 弯道目标速度
-    "min_speed": 0.40,  # 弯道最低速度
-    "max_steer": 0.55,  # 弯道最大转角
+    "target_speed": 0.76,  # 弯道目标速度
+    "min_speed": 0.42,  # 弯道最低速度
+    "max_steer": 0.58,  # 弯道最大转角
     "deadband": 0.00,  # 弯道误差死区
-    "turn_speed_drop": 0.04,  # 弯道误差降速系数
-    "pid_kp": 0.82,
+    "turn_speed_drop": 0.035,  # 弯道误差降速系数
+    "pid_kp": 0.86,
     "pid_ki": 0.02,
     "pid_kd": 0.10,
     "pid_integral_limit": STRAIGHT_PARAMS["pid_integral_limit"],
-    "steer_rate_limit": 0.16,  # 弯道单帧转角变化限制
+    "steer_rate_limit": 0.18,  # 弯道单帧转角变化限制
     "sharp_turn_err": 0.55,  # 弯道大误差强制补转向阈值
-    "sharp_turn_steer": 0.34,  # 弯道大误差时的最小转角
+    "sharp_turn_steer": 0.36,  # 弯道大误差时的最小转角
 }
 
 # 丢线恢复参数
@@ -143,7 +143,7 @@ DEBUG_PERIOD = 0.5  # 日志节流周期，单位秒
 DEBUG_DRAW = False  # 是否在图像上绘制5行关键调试文字，默认关闭以提高帧率
 DEBUG_SHOW_MASKS = False  # 是否显示ROI和路面mask调试窗口，跑速度时应关闭
 DEBUG_DRAW_MARKERS = True  # 是否在camera画面上绘制目标线和检测质心
-DEBUG_VERSION = "direct_line_near_curve_multiroi_v11_log_speed_tune"  # 当前调试版本标识
+DEBUG_VERSION = "direct_line_near_curve_multiroi_v12_faster_turns"  # 当前调试版本标识
 
 # 滑轨可调参数说明：
 # 数值后带 x100 的滑轨采用百分制缩放，例如滑轨值 60 表示实际参数 0.60。
