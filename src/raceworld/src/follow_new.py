@@ -7,7 +7,7 @@ from sensor_msgs.msg import Image
 from ackermann_msgs.msg import AckermannDriveStamped
 
 # 全局速度参数
-MAX_SPEED = 1.22  # 全局最高速度上限
+MAX_SPEED = 1.4  # 全局最高速度上限
 PROCESS_RESIZE_ENABLED = True
 PROCESS_WIDTH = 480
 PROCESS_HEIGHT = 360
@@ -17,7 +17,7 @@ VISION_BASE_HEIGHT = 480.0
 # 图像ROI参数：ratio越大，ROI越靠近图像下方，也就是看得越近
 ROI_TOP_RATIO_BASE = 0.58  # 初始ROI顶部比例
 ROI_TOP_RATIO_MIN = 0.3  # 动态ROI最远观察位置
-ROI_TOP_RATIO_MAX = 0.7  # 动态ROI最近观察位置
+ROI_TOP_RATIO_MAX = 0.5  # 动态ROI最近观察位置
 ROI_RATIO_ALPHA = 0.20  # ROI位置低通滤波系数，越大变化越快
 ROI_HEIGHT = 70  # ROI高度，单位像素
 ROI_TARGET_DEADBAND = 0.035  # ROI目标比例变化小于该值时认为是同一个目标，避免层切换抖动
@@ -84,11 +84,11 @@ LARGE_ERR_THRESHOLD = 0.62  # 进入大误差限速的误差阈值
 SEVERE_ERR_THRESHOLD = 0.82  # 进入严重误差限速的误差阈值
 
 STRAIGHT_PARAMS = {
-    "target_speed": 0.88,  # 直道目标速度
-    "min_speed": 0.20,  # 直道最低速度
+    "target_speed": 1.20,  # 直道目标速度
+    "min_speed": 0.7,  # 直道最低速度
     "max_steer": 0.38,  # 直道最大转角
     "deadband": 0.04,  # 直道误差死区，小于该值按0处理
-    "turn_speed_drop": 0.085,  # 误差越大速度越低的降速系数
+    "turn_speed_drop": 0.02,  # 误差越大速度越低的降速系数
     "pid_kp": 0.88,  # 直道PID比例系数
     "pid_ki": 0.01,  # 直道PID积分系数
     "pid_kd": 0.15,  # 直道PID微分系数
@@ -115,10 +115,10 @@ STARTUP_PARAMS = {
 
 TURN_PARAMS = {
     "target_speed": 1.00,  # 弯道目标速度
-    "min_speed": 0.56,  # 弯道最低速度
+    "min_speed": 0.6,  # 弯道最低速度
     "max_steer": 0.74,  # 弯道最大转角
     "deadband": 0.00,  # 弯道误差死区
-    "turn_speed_drop": 0.028,  # 弯道误差降速系数
+    "turn_speed_drop": 0.03,  # 弯道误差降速系数
     "pid_kp": 1.06,
     "pid_ki": 0.02,
     "pid_kd": 0.14,
@@ -142,7 +142,7 @@ RECOVERY_EDGE_RAW_ERR = 0.35  # 原始误差超过该值认为是边缘丢线
 RECOVERY_EDGE_LINE_ERR = 0.30  # 线误差超过该值认为是边缘丢线
 
 # 调试输出参数
-DEBUG_OUTPUT = True  # 是否输出ROS节流日志
+DEBUG_OUTPUT = False  # 是否输出ROS节流日志
 DEBUG_PERIOD = 0.5  # 日志节流周期，单位秒
 DEBUG_DRAW = False  # 是否在图像上绘制5行关键调试文字，默认关闭以提高帧率
 DEBUG_SHOW_MASKS = False  # 是否显示ROI和路面mask调试窗口，跑速度时应关闭
@@ -186,40 +186,41 @@ DEBUG_VERSION = "direct_line_near_curve_multiroi_v18_speed_guard_recovery"  # �
 # image remains visible while control parameters are adjusted.
 CAMERA_WINDOW = "camera"
 TUNING_WINDOW = "control tuning"
-TUNING_ENABLED = True
+TUNING_WINDOW_ENABLED = False
+CAMERA_WINDOW_ENABLED = False
 TUNING_POLL_INTERVAL = 3
 TUNING_TRACKBARS = (
-    ("Max speed x100", "Speed cap x100", int(round(MAX_SPEED * 100)), 140),
+    ("Max speed x100", "Speed cap x100", int(round(MAX_SPEED * 100)), 300),
     ("Err alpha x100", "Error filter alpha x100", int(round(ERR_ALPHA * 100)), 100),
     ("Steer gain min x100", "Steer gain floor x100", int(round(STRAIGHT_STEER_SPEED_GAIN_MIN * 100)), 100),
-    ("S speed x100", "Straight target speed x100", int(round(STRAIGHT_PARAMS["target_speed"] * 100)), 120),
-    ("S min x100", "Straight min speed x100", int(round(STRAIGHT_PARAMS["min_speed"] * 100)), 100),
-    ("S steer x100", "Straight max steer x100", int(round(STRAIGHT_PARAMS["max_steer"] * 100)), 100),
-    ("S dead x100", "Straight error deadband x100", int(round(STRAIGHT_PARAMS["deadband"] * 100)), 100),
-    ("S drop x100", "Straight error speed drop x100", int(round(STRAIGHT_PARAMS["turn_speed_drop"] * 100)), 100),
-    ("S kp x100", "Straight PID Kp x100", int(round(STRAIGHT_PARAMS["pid_kp"] * 100)), 300),
-    ("S ki x100", "Straight PID Ki x100", int(round(STRAIGHT_PARAMS["pid_ki"] * 100)), 100),
-    ("S kd x100", "Straight PID Kd x100", int(round(STRAIGHT_PARAMS["pid_kd"] * 100)), 200),
-    ("S rate x100", "Straight steer rate x100", int(round(STRAIGHT_PARAMS["steer_rate_limit"] * 100)), 100),
-    ("T speed x100", "Turn target speed x100", int(round(TURN_PARAMS["target_speed"] * 100)), 120),
-    ("T min x100", "Turn min speed x100", int(round(TURN_PARAMS["min_speed"] * 100)), 100),
-    ("T steer x100", "Turn max steer x100", int(round(TURN_PARAMS["max_steer"] * 100)), 100),
-    ("T dead x100", "Turn error deadband x100", int(round(TURN_PARAMS["deadband"] * 100)), 100),
-    ("T drop x100", "Turn error speed drop x100", int(round(TURN_PARAMS["turn_speed_drop"] * 100)), 100),
-    ("T kp x100", "Turn PID Kp x100", int(round(TURN_PARAMS["pid_kp"] * 100)), 300),
-    ("T ki x100", "Turn PID Ki x100", int(round(TURN_PARAMS["pid_ki"] * 100)), 100),
-    ("T kd x100", "Turn PID Kd x100", int(round(TURN_PARAMS["pid_kd"] * 100)), 200),
-    ("T rate x100", "Turn steer rate x100", int(round(TURN_PARAMS["steer_rate_limit"] * 100)), 100),
-    ("U speed x100", "Startup target speed x100", int(round(STARTUP_PARAMS["target_speed"] * 100)), 80),
-    ("U steer x100", "Startup max steer x100", int(round(STARTUP_PARAMS["max_steer"] * 100)), 100),
-    ("U kp x100", "Startup PID Kp x100", int(round(STARTUP_PARAMS["pid_kp"] * 100)), 300),
-    ("U kd x100", "Startup PID Kd x100", int(round(STARTUP_PARAMS["pid_kd"] * 100)), 200),
-    ("Rec speed x100", "Recovery speed x100", int(round(RECOVERY_SPEED * 100)), 50),
-    ("Rec min steer x100", "Recovery min steer x100", int(round(RECOVERY_MIN_STEER * 100)), 100),
-    ("Rec max steer x100", "Recovery max steer x100", int(round(RECOVERY_MAX_STEER * 100)), 100),
-    ("Rec cont x100", "Recovery continue gain x100", int(round(RECOVERY_CONTINUE_GAIN * 100)), 200),
-    ("Rec rev x100", "Recovery reverse gain x100", int(round(RECOVERY_REVERSE_GAIN * 100)), 200),
-    ("Rec frames", "Recovery frame count", RECOVERY_FRAMES, 120),
+    ("S speed x100", "Straight target speed x100", int(round(STRAIGHT_PARAMS["target_speed"] * 100)), 300),
+    ("S min x100", "Straight min speed x100", int(round(STRAIGHT_PARAMS["min_speed"] * 100)), 300),
+    ("S steer x100", "Straight max steer x100", int(round(STRAIGHT_PARAMS["max_steer"] * 100)), 300),
+    ("S dead x100", "Straight error deadband x100", int(round(STRAIGHT_PARAMS["deadband"] * 100)), 300),
+    ("S drop x100", "Straight error speed drop x100", int(round(STRAIGHT_PARAMS["turn_speed_drop"] * 100)), 300),
+    ("S kp x100", "Straight PID Kp x100", int(round(STRAIGHT_PARAMS["pid_kp"] * 100)), 800),
+    ("S ki x100", "Straight PID Ki x100", int(round(STRAIGHT_PARAMS["pid_ki"] * 100)), 500),
+    ("S kd x100", "Straight PID Kd x100", int(round(STRAIGHT_PARAMS["pid_kd"] * 100)), 500),
+    ("S rate x100", "Straight steer rate x100", int(round(STRAIGHT_PARAMS["steer_rate_limit"] * 100)), 300),
+    ("T speed x100", "Turn target speed x100", int(round(TURN_PARAMS["target_speed"] * 100)), 300),
+    ("T min x100", "Turn min speed x100", int(round(TURN_PARAMS["min_speed"] * 100)), 300),
+    ("T steer x100", "Turn max steer x100", int(round(TURN_PARAMS["max_steer"] * 100)), 300),
+    ("T dead x100", "Turn error deadband x100", int(round(TURN_PARAMS["deadband"] * 100)), 300),
+    ("T drop x100", "Turn error speed drop x100", int(round(TURN_PARAMS["turn_speed_drop"] * 100)), 300),
+    ("T kp x100", "Turn PID Kp x100", int(round(TURN_PARAMS["pid_kp"] * 100)), 800),
+    ("T ki x100", "Turn PID Ki x100", int(round(TURN_PARAMS["pid_ki"] * 100)), 500),
+    ("T kd x100", "Turn PID Kd x100", int(round(TURN_PARAMS["pid_kd"] * 100)), 500),
+    ("T rate x100", "Turn steer rate x100", int(round(TURN_PARAMS["steer_rate_limit"] * 100)), 300),
+    ("U speed x100", "Startup target speed x100", int(round(STARTUP_PARAMS["target_speed"] * 100)), 200),
+    ("U steer x100", "Startup max steer x100", int(round(STARTUP_PARAMS["max_steer"] * 100)), 300),
+    ("U kp x100", "Startup PID Kp x100", int(round(STARTUP_PARAMS["pid_kp"] * 100)), 800),
+    ("U kd x100", "Startup PID Kd x100", int(round(STARTUP_PARAMS["pid_kd"] * 100)), 500),
+    ("Rec speed x100", "Recovery speed x100", int(round(RECOVERY_SPEED * 100)), 200),
+    ("Rec min steer x100", "Recovery min steer x100", int(round(RECOVERY_MIN_STEER * 100)), 300),
+    ("Rec max steer x100", "Recovery max steer x100", int(round(RECOVERY_MAX_STEER * 100)), 300),
+    ("Rec cont x100", "Recovery continue gain x100", int(round(RECOVERY_CONTINUE_GAIN * 100)), 500),
+    ("Rec rev x100", "Recovery reverse gain x100", int(round(RECOVERY_REVERSE_GAIN * 100)), 500),
+    ("Rec frames", "Recovery frame count", RECOVERY_FRAMES, 300),
     ("Show masks", "Show mask windows", int(DEBUG_SHOW_MASKS), 1),
     ("Draw debug", "Draw debug text", int(DEBUG_DRAW), 1),
     ("Draw marks", "Draw target markers", int(DEBUG_DRAW_MARKERS), 1),
@@ -336,7 +337,7 @@ def update_control_dt(stamp=None):
 def ensure_tuning_controls():
     global tuning_initialized
 
-    if tuning_initialized or not TUNING_ENABLED:
+    if tuning_initialized or not TUNING_WINDOW_ENABLED:
         return
 
     cv2.namedWindow(TUNING_WINDOW, 0)
@@ -349,7 +350,7 @@ def ensure_tuning_controls():
 def refresh_tuning_cache(force=False):
     global tuning_poll_count, tuning_cache_valid
 
-    if not TUNING_ENABLED or not tuning_initialized:
+    if not TUNING_WINDOW_ENABLED or not tuning_initialized:
         if not tuning_cache_valid or force:
             rebuild_tuned_controls()
         tuning_cache_valid = True
@@ -551,7 +552,7 @@ def current_recovery_params():
 
 
 def current_show_masks():
-    return tuned_show_masks
+    return CAMERA_WINDOW_ENABLED and tuned_show_masks
 
 
 def current_draw_debug():
@@ -565,7 +566,7 @@ def current_draw_markers():
 def ensure_camera_window():
     global camera_window_initialized
 
-    if camera_window_initialized:
+    if camera_window_initialized or not CAMERA_WINDOW_ENABLED:
         return
 
     cv2.namedWindow(CAMERA_WINDOW, 0)
@@ -574,9 +575,11 @@ def ensure_camera_window():
 
 def show_camera_frame(image):
     ensure_tuning_controls()
-    ensure_camera_window()
-    cv2.imshow(CAMERA_WINDOW, image)
-    cv2.waitKey(1)
+    if CAMERA_WINDOW_ENABLED:
+        ensure_camera_window()
+        cv2.imshow(CAMERA_WINDOW, image)
+    if CAMERA_WINDOW_ENABLED or TUNING_WINDOW_ENABLED:
+        cv2.waitKey(1)
 
 
 def roi_bounds(h, ratio):
@@ -1486,7 +1489,8 @@ def stop_car():
 
 if __name__ == "__main__":
     rospy.init_node("follower")
-    rospy.loginfo("follow_perf version: {}".format(DEBUG_VERSION))
+    if DEBUG_OUTPUT:
+        rospy.loginfo("follow_perf version: {}".format(DEBUG_VERSION))
     pub = rospy.Publisher("/car1/ackermann_cmd_mux/output", AckermannDriveStamped, queue_size=10)
     rospy.on_shutdown(stop_car)
     rospy.Subscriber("/car1/camera/zed_left/image_rect_color_left", Image, image_callback)
